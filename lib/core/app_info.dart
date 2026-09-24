@@ -16,6 +16,9 @@ class AppInfo {
   static const String latestReleaseApi =
       'https://api.github.com/repos/makisekurse/history-sim/releases/latest';
 
+  static const String developer = 'makisekurisu';
+  static const String developerUrl = 'https://github.com/makisekurse';
+
   static const String version =
       String.fromEnvironment('APP_VERSION', defaultValue: '1.0.0-dev');
   static const String buildNumber =

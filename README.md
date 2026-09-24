@@ -14,7 +14,7 @@
 ## 下载
 
 最新安装包在 [Releases](https://github.com/makisekurse/history-sim/releases/latest) 页面，
-选 `histsim-*-arm64.apk` 下载后直接安装。
+选 `histsim-*-arm64.apk` 下载后直接安装（仓库公开，无需登录）。
 
 - 仅支持 **arm64-v8a**（2018 年以后的手机都是）
 - 签名固定，新版本可直接覆盖安装旧版本
@@ -144,3 +144,5 @@ lib/
 ## 许可
 
 个人项目，未附许可协议。如需使用请先联系作者。
+
+**开发者**：[makisekurisu](https://github.com/makisekurse)

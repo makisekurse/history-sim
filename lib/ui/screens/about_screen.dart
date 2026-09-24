@@ -73,6 +73,7 @@ class _AboutScreenState extends State<AboutScreen> {
             ),
           ),
           const SizedBox(height: 26),
+          _row(theme, '开发者', AppInfo.developer),
           _row(theme, '版本号', AppInfo.version),
           _row(theme, '构建号', AppInfo.buildNumber),
           _row(theme, '提交', AppInfo.shortSha),
@@ -121,9 +122,22 @@ class _AboutScreenState extends State<AboutScreen> {
           ],
           const SizedBox(height: 26),
           Center(
-            child: Text(
-              AppInfo.repoUrl,
-              style: TextStyle(fontSize: 11.5, color: muted),
+            child: Column(
+              children: <Widget>[
+                Text(
+                  '开发者：${AppInfo.developer}',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  AppInfo.repoUrl,
+                  style: TextStyle(fontSize: 11.5, color: muted),
+                ),
+              ],
             ),
           ),
         ],
