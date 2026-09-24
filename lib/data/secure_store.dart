@@ -8,7 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class SecureStore {
   SecureStore._();
 
-  static const String _keyApiKey = 'histsim_api_key_v1';
+  static const String _keyApiKey = 'nijing_api_key_v1';
 
   static const FlutterSecureStorage _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),

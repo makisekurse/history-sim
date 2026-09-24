@@ -49,10 +49,10 @@ jobs:
           KS_B64: ${{ secrets.TEST_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KS_B64" ]; then
-            printf '%s' "$KS_B64" | base64 -d > android/histsim.jks
-            printf 'storePassword=android\nkeyPassword=android\nkeyAlias=anerycoft\nstoreFile=../histsim.jks\n' > android/key.properties
+            printf '%s' "$KS_B64" | base64 -d > android/nijing.jks
+            printf 'storePassword=android\nkeyPassword=android\nkeyAlias=anerycoft\nstoreFile=../nijing.jks\n' > android/key.properties
             echo "✅ 使用固定测试签名密钥（签名一致，可直接覆盖安装）"
-            keytool -list -v -keystore android/histsim.jks -storepass android 2>/dev/null | grep "SHA256:" | head -1
+            keytool -list -v -keystore android/nijing.jks -storepass android 2>/dev/null | grep "SHA256:" | head -1
           else
             echo "::warning::未配置 TEST_KEYSTORE_BASE64 —— 本次退回 debug 签名，无法覆盖安装正式包"
           fi
@@ -82,7 +82,7 @@ jobs:
         id: apk
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          NAME="histsim-1.0.${{ env.BUILD_NUMBER }}-${SHORT_SHA}-arm64.apk"
+          NAME="nijing-1.0.${{ env.BUILD_NUMBER }}-${SHORT_SHA}-arm64.apk"
           mv build/app/outputs/flutter-apk/app-release.apk \
              "build/app/outputs/flutter-apk/${NAME}"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"

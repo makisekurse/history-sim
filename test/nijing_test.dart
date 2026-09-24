@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:histsim/models/annotation.dart';
-import 'package:histsim/models/world_book.dart';
-import 'package:histsim/services/response_parser.dart';
+import 'package:nijing/models/annotation.dart';
+import 'package:nijing/models/world_book.dart';
+import 'package:nijing/services/response_parser.dart';
 
 void main() {
   group('WorldBook 导入', () {

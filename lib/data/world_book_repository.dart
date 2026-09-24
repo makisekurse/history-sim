@@ -9,7 +9,7 @@ import 'prefs_store.dart';
 class WorldBookRepository {
   WorldBookRepository._();
 
-  static const String _key = 'histsim_worldbooks_v1';
+  static const String _key = 'nijing_worldbooks_v1';
 
   static Future<List<WorldBook>> loadAll() async {
     final raw = await PrefsStore.getString(_key);

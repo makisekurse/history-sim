@@ -1,5 +1,5 @@
-name: histsim
-description: "历史推演模拟器 —— 世界书驱动的沉浸式大历史沙盘推演引擎"
+name: nijing
+description: "拟境 —— 世界书驱动的沉浸式情境推演引擎"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -59,7 +59,7 @@ flutter_launcher_icons:
   android: "ic_launcher"
   ios: false
   image_path: "assets/icon/app_icon.png"
-  adaptive_icon_background: "#0C1520"
+  adaptive_icon_background: "#060A16"
   adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
   min_sdk_android: 21
 

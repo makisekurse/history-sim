@@ -10,7 +10,7 @@ import '../models/save_slot.dart';
 class SaveService {
   SaveService._();
 
-  static const String _key = 'histsim_saves_v1';
+  static const String _key = 'nijing_saves_v1';
 
   static Future<List<SaveSlot>> loadAll() async {
     final raw = await PrefsStore.getString(_key);

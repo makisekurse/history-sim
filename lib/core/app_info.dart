@@ -5,16 +5,16 @@
 class AppInfo {
   AppInfo._();
 
-  static const String appName = '历史推演模拟器';
-  static const String appNameEn = 'histsim';
-  static const String slogan = '世界书驱动的沉浸式大历史沙盘推演';
+  static const String appName = '拟境';
+  static const String appNameEn = 'nijing';
+  static const String slogan = '世界书驱动的沉浸式情境推演';
 
   static const String repoOwner = 'makisekurse';
-  static const String repoName = 'history-sim';
-  static const String repoUrl = 'https://github.com/makisekurse/history-sim';
+  static const String repoName = 'nijing';
+  static const String repoUrl = 'https://github.com/makisekurse/nijing';
   static const String releasesUrl = '$repoUrl/releases';
   static const String latestReleaseApi =
-      'https://api.github.com/repos/makisekurse/history-sim/releases/latest';
+      'https://api.github.com/repos/makisekurse/nijing/releases/latest';
 
   static const String developer = 'makisekurisu';
   static const String developerUrl = 'https://github.com/makisekurse';

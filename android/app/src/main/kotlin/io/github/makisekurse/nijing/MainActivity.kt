@@ -1,4 +1,4 @@
-package io.github.makisekurse.histsim
+package io.github.makisekurse.nijing
 
 import io.flutter.embedding.android.FlutterActivity
 

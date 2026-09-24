@@ -77,7 +77,7 @@ class _AboutScreenState extends State<AboutScreen> {
           _row(theme, '版本号', AppInfo.version),
           _row(theme, '构建号', AppInfo.buildNumber),
           _row(theme, '提交', AppInfo.shortSha),
-          _row(theme, '包名', 'io.github.makisekurse.histsim'),
+          _row(theme, '包名', 'io.github.makisekurse.nijing'),
           const SizedBox(height: 20),
           Text(
             '世界书、存档、API Key 全部只保存在本机。'

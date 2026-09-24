@@ -1,8 +1,8 @@
-# 历史推演模拟器 · histsim
+# 拟境 · nijing
 
-> 世界书驱动的沉浸式大历史沙盘推演引擎
+> 世界书驱动的沉浸式情境推演引擎
 
-把自己放进一段历史里，做决定，看后果。
+把自己放进一个世界，做决定，看后果。
 
 不是数值游戏 —— 没有血条、金币和属性面板。全屏是精装历史小说的阅读质感，
 每一幕由你自己配置的大模型实时生成，结尾给出几个战略抉择，也可以直接写下你自己的行动。
@@ -13,8 +13,8 @@
 
 ## 下载
 
-最新安装包在 [Releases](https://github.com/makisekurse/history-sim/releases/latest) 页面，
-选 `histsim-*-arm64.apk` 下载后直接安装（仓库公开，无需登录）。
+最新安装包在 [Releases](https://github.com/makisekurse/nijing/releases/latest) 页面，
+选 `nijing-*-arm64.apk` 下载后直接安装（仓库公开，无需登录）。
 
 - 仅支持 **arm64-v8a**（2018 年以后的手机都是）
 - 签名固定，新版本可直接覆盖安装旧版本

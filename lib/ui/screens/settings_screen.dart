@@ -71,12 +71,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _wsCtrl.text = ws);
   }
 
-  static const String _kWorkspace = 'histsim_workspace_id';
+  static const String _kWorkspace = 'nijing_workspace_id';
 
   void _apply(AppConfig next, {bool persistKey = false}) {
     setState(() => _config = next);
     widget.onConfigChanged(next);
-    PrefsStore.setStringDebounced('histsim_config_v1', next.encode());
+    PrefsStore.setStringDebounced('nijing_config_v1', next.encode());
     if (persistKey) {
       SecureStore.writeApiKey(_keyCtrl.text.trim());
     }

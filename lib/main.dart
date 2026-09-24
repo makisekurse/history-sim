@@ -12,8 +12,8 @@ import 'ui/screens/onboarding_screen.dart';
 import 'ui/screens/settings_screen.dart';
 import 'ui/themes/app_theme.dart';
 
-const String kConfigKey = 'histsim_config_v1';
-const String kFirstRunKey = 'histsim_first_run_done';
+const String kConfigKey = 'nijing_config_v1';
+const String kFirstRunKey = 'nijing_first_run_done';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
