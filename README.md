@@ -1,17 +1,146 @@
-# deng_1949_rpg
+# 历史推演模拟器 · histsim
 
-A new Flutter project.
+> 世界书驱动的沉浸式大历史沙盘推演引擎
 
-## Getting Started
+把自己放进一段历史里，做决定，看后果。
 
-This project is a starting point for a Flutter application.
+不是数值游戏 —— 没有血条、金币和属性面板。全屏是精装历史小说的阅读质感，
+每一幕由你自己配置的大模型实时生成，结尾给出几个战略抉择，也可以直接写下你自己的行动。
 
-A few resources to get you started if this is your first Flutter project:
+**应用本身不内置任何剧本。** 你演谁、身处什么时代、用什么文风，全部由你写的「世界书」决定。
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+---
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 下载
+
+最新安装包在 [Releases](https://github.com/makisekurse/history-sim/releases/latest) 页面，
+选 `histsim-*-arm64.apk` 下载后直接安装。
+
+- 仅支持 **arm64-v8a**（2018 年以后的手机都是）
+- 签名固定，新版本可直接覆盖安装旧版本
+
+---
+
+## 它是什么
+
+| | |
+|---|---|
+| **零 HUD** | 顶栏轻触才出现，3 秒自动淡出。三套纸质主题：时代报章 / 暗夜墨石 / 素雅宣纸 |
+| **世界书** | 世界观、扮演人物、叙事文风、附加规则、开篇场景 —— 全部可写、可导入、可导出分享 |
+| **双模交互** | 每幕给出 2~3 个抉择分支，同时保留自由输入框，你可以写任何行动 |
+| **拒答兜底** | 模型拒答或输出截断时自动改写重试 → 提示切换通道 → 回落本地降级，游戏不会卡死 |
+| **编年史** | 每 5 幕把前情压缩成摘要回灌上下文，长局不会失忆 |
+| **人物志 / 词条** | 由模型随文附带，自动积累成可查的人物志与生僻词注释 |
+| **存档** | 多存档槽，可回滚到任意一幕，可单幕重新生成 |
+| **一切只在本机** | 世界书、存档、API Key 都不上传。Key 走系统加密存储 |
+
+---
+
+## 快速开始
+
+1. 装好 App，首次打开会引导你配置模型接口
+2. 设置 → 选服务商（默认阿里云百炼），填 API Key，点「测试连接」
+   - 默认模型 `qwen3.8-flash`，便宜、快
+3. 回首页 →「世界书」标签 → 新建或导入一本
+4. 「推演」标签 → 新建推演 → 开始
+
+### 导入世界书
+
+在「世界书」页点「导入提示词 / JSON」，支持两种格式：
+
+**JSON**（完整字段，推荐用于分享）
+
+```json
+{
+  "name": "世界书名",
+  "era": "时代与时间跨度",
+  "worldview": "世界观与背景设定",
+  "playerRole": "你扮演的人物",
+  "narrativeStyle": "叙事文风",
+  "extraRules": "附加规则与禁忌",
+  "openingScene": "开篇场景（选填）",
+  "openingChoices": ["开篇分支一", "开篇分支二"]
+}
+```
+
+**纯文本**：整段会被当作「世界观设定」，其余字段留空待补。
+
+`worldbooks/` 目录里放了一份示例世界书，复制内容即可导入。
+
+---
+
+## 自己构建
+
+```bash
+flutter pub get
+flutter build apk --release          # 产物在 build/app/outputs/flutter-apk/
+```
+
+CI 由 GitHub Actions 负责（`.github/workflows/android.yml`）：推 `main` 自动出包并发布 Release。
+
+需要配置仓库 Secret `TEST_KEYSTORE_BASE64`（固定签名密钥的 base64）。
+没配会退回 debug 签名 —— 那样每个包签名不同，无法覆盖安装。
+
+### 图标
+
+`assets/icon/` 下两张 PNG 是图标源文件，改设计后重跑生成脚本再执行
+`flutter pub run flutter_launcher_icons` 即可。
+
+---
+
+## 架构
+
+```
+lib/
+├── core/        常量 · 错误分类
+├── models/      世界书 · 幕节点 · 词条人物 · 存档槽 · 配置
+├── data/        本地存储（防抖写）· 加密存储 · 世界书仓库
+├── services/    流式客户端 · 输出解析 · 提示词三层组装 · 拒答兜底 · 编年史 · 存档 · 更新检查
+└── ui/          主题 · 页面 · 组件
+```
+
+依赖自上而下单向流动，下层不反向依赖上层。
+**UI 层不包含任何具体剧本信息** —— 界面上出现的每个字都来自当前世界书。
+
+### 提示词三层
+
+| 层 | 是否可改 | 作用 |
+|---|---|---|
+| 内核层 | 锁定 | 输出格式契约（`<date>` / `<choices>` / `<glossary>` / `<cast>`）、角色约束 |
+| 框架层 | 可改，可恢复默认 | 历史正剧叙事框架、创作定位 |
+| 世界层 | 完全自由 | 世界观、扮演人物、文风、附加规则 —— 全部来自世界书 |
+
+### 模型输出契约
+
+模型每幕必须返回带标签的结构，应用解析后渲染：
+
+```
+<date>剧中日期</date>
+（正文）
+<choices>
+第一条决断
+第二条决断
+</choices>
+<glossary>
+词条|解释
+</glossary>
+<cast>
+姓名|身份|立场
+</cast>
+```
+
+缺少 `<choices>` 会被判定为截断，走兜底链路。
+
+---
+
+## 隐私
+
+- 世界书、存档：只存在设备本地
+- API Key：系统加密存储（Android EncryptedSharedPreferences）
+- 推演内容直接发往你自己配置的模型接口，本项目没有自己的服务器
+
+---
+
+## 许可
+
+个人项目，未附许可协议。如需使用请先联系作者。

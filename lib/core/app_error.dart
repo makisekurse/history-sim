@@ -19,7 +19,7 @@ enum AppErrorKind {
   /// 模型拒答（内容审核拦截，返回空或只有致歉语）
   refused,
 
-  /// 输出被截断（没有出现 <choices> 结构块）
+  /// 输出被截断（没有出现 `<choices>` 结构块）
   truncated,
 
   /// 返回体解析失败

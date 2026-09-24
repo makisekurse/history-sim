@@ -441,7 +441,7 @@ class _LibraryScreenState extends State<LibraryScreen>
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
       itemCount: _slots.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, i) {
         final s = _slots[i];
         return InkWell(

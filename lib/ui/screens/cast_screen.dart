@@ -52,7 +52,7 @@ class CastScreen extends StatelessWidget {
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
               itemCount: entries.length,
-              separatorBuilder: (_, __) => Divider(
+              separatorBuilder: (_, _) => Divider(
                 height: 24,
                 color: theme.dividerColor,
               ),

@@ -1,0 +1,120 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: "17"
+  FLUTTER_VERSION: "3.47.5"
+  # versionCode 用 CI 运行序号 —— 只增不减，保证新包能直接覆盖安装旧包。
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # cache: gradle 必须开 —— 不开的话每次都要从零下载 Gradle 依赖并重跑全量编译。
+      # 配合 android/gradle.properties 里的 org.gradle.caching=true 才能连 task 输出一起复用。
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # 签名：用仓库 Secret 里的**固定**测试密钥。
+      # 绝不能用 keytool -genkeypair 现场生成 —— 那样每次构建签名都不同，
+      # 装到上一个包上必然报「签名冲突」。
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.TEST_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            printf '%s' "$KS_B64" | base64 -d > android/histsim.jks
+            printf 'storePassword=android\nkeyPassword=android\nkeyAlias=anerycoft\nstoreFile=../histsim.jks\n' > android/key.properties
+            echo "✅ 使用固定测试签名密钥（签名一致，可直接覆盖安装）"
+            keytool -list -v -keystore android/histsim.jks -storepass android 2>/dev/null | grep "SHA256:" | head -1
+          else
+            echo "::warning::未配置 TEST_KEYSTORE_BASE64 —— 本次退回 debug 签名，无法覆盖安装正式包"
+          fi
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Run unit tests
+        run: flutter test
+
+      - name: Build release APK (arm64-v8a only)
+        run: |
+          # --target-platform 必须显式指定：Flutter 的 Gradle 插件会绕过
+          # android 里的 ndk.abiFilters，只用 abiFilters 的话三个 ABI 全都会打进包里。
+          flutter build apk --release \
+            --target-platform android-arm64 \
+            --build-number="${{ env.BUILD_NUMBER }}" \
+            --build-name="1.0.${{ env.BUILD_NUMBER }}" \
+            --dart-define=APP_VERSION="1.0.${{ env.BUILD_NUMBER }}" \
+            --dart-define=BUILD_NUMBER="${{ env.BUILD_NUMBER }}" \
+            --dart-define=GIT_SHA="${{ github.sha }}"
+
+      - name: Rename APK
+        id: apk
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          NAME="histsim-1.0.${{ env.BUILD_NUMBER }}-${SHORT_SHA}-arm64.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "build/app/outputs/flutter-apk/${NAME}"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 构建产物"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 文件 | \`${NAME}\` |"
+            echo "| versionCode | ${{ env.BUILD_NUMBER }} |"
+            echo "| versionName | 1.0.${{ env.BUILD_NUMBER }} |"
+            echo "| commit | \`${{ github.sha }}\` |"
+            echo "| ABI | arm64-v8a |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -lh "build/app/outputs/flutter-apk/${NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: build/app/outputs/flutter-apk/${{ steps.apk.outputs.name }}
+          if-no-files-found: error
+
+      # 发布：推 main 就更新一个滚动版本号 v1.0.<run_number> 的 Release，
+      # 打 v* 标签则发布到对应标签。Release Notes 由 GitHub 从 commit 自动生成。
+      - name: Publish release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', env.BUILD_NUMBER) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', env.BUILD_NUMBER) }}
+          files: build/app/outputs/flutter-apk/${{ steps.apk.outputs.name }}
+          generate_release_notes: true
+          make_latest: true
+          body: |
+            **构建号**：`${{ env.BUILD_NUMBER }}` · **commit**：`${{ steps.apk.outputs.short_sha }}` · **ABI**：arm64-v8a
+
+            安装包见下方 Assets。签名固定，可直接覆盖安装旧版本。

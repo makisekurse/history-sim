@@ -128,10 +128,12 @@ class WorldBook {
       try {
         final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic>) {
-          return fromJson(_normalizeKeys(decoded));
+          return WorldBook.fromJson(_normalizeKeys(decoded));
         }
         if (decoded is Map) {
-          return fromJson(_normalizeKeys(Map<String, dynamic>.from(decoded)));
+          return WorldBook.fromJson(
+            _normalizeKeys(Map<String, dynamic>.from(decoded)),
+          );
         }
       } on FormatException {
         // 落到下面的纯文本分支
