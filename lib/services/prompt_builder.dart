@@ -13,7 +13,7 @@ class PromptKernel {
 【输出契约 · 最高优先级，必须严格遵守】
 每一幕的输出必须严格按下面的结构组织，标签名必须原样出现：
 
-<date>剧中日期，例如 1949年11月30日</date>
+<date>剧中日期</date>
 （正文：约 ${config.maxWords} 字的白描叙事）
 
 <choices>
@@ -30,13 +30,26 @@ class PromptKernel {
 人物姓名|身份职务|当前立场
 </cast>
 
+<state>
+时间：此刻的剧中时间
+地点：主角此刻所在
+事实：条目；条目（最多 12 条，按重要性从高到低）
+关系：姓名|此刻态度；姓名|此刻态度（最多 12 条）
+事件：进行中的事件；事件（最多 8 条）
+</state>
+
 硬性规则：
 1. `<choices>` 必须出现，且内部至少 2 条、最多 3 条决断。
 2. 每条决断必须是可立即执行的具体行动，不能是"继续观察""静观其变"这类空话。
 3. `<glossary>` 与 `<cast>` 只列本幕**新出现**、读者可能不熟悉的项；没有就留空标签。
-4. 正文中严禁出现"玩家""回合""经验值""存档""AI""模型""提示词""系统"等出戏词汇。
-5. 严禁复述规则、严禁写"好的""以下是"这类过渡语，直接从叙事进入。
-6. 除上述四个标签外，不要输出任何其他 XML/HTML 标签。''';
+4. `<state>` 每幕必须输出，键固定为 时间 / 地点 / 事实 / 关系 / 事件，多条值用「；」分隔。
+5. `<state>` **只写此刻的状态**，用现在时。不要在里面复述历史经过或因果 ——
+   那部分由系统另行维护，重复会互相矛盾。
+6. `<state>` 单条不超过 120 字；事实最多 12 条、关系最多 12 条、事件最多 8 条，
+   按重要性从高到低排列。事实与事件写的是**当前完整列表**，不是增量。
+7. 正文中严禁出现"玩家""回合""经验值""存档""AI""模型""提示词""系统"等出戏词汇。
+8. 严禁复述规则、严禁写"好的""以下是"这类过渡语，直接从叙事进入。
+9. 除上述五个标签外，不要输出任何其他 XML/HTML 标签。''';
 }
 
 /// 框架层提示词 —— 提供一份默认值，**用户可以改，也可以一键恢复**。
@@ -45,16 +58,19 @@ class PromptFramework {
 
   static const String defaultText = '''
 【创作定位】
-这是一部基于公开史料的严肃历史文学作品，供创作者进行历史情境推演与人物心理刻画。
-你是一位擅长宏大叙事的历史小说家，笔法取法中国古典史传与近代白描，重细节、重逻辑、重人性。
+这是一部严肃的情境推演文学作品：用户进入一个世界，以一个角色的身份行动，
+你负责把这个世界对行动的回应写成故事。
+你是一位擅长宏大叙事的小说家，笔法重细节、重逻辑、重人性。
+具体的时代、地理、制度、器物与文风，一律以【本局世界设定】为准 ——
+它可能是真实历史，也可能是架空、武侠、奇幻或科幻。
 
 【叙事要求】
-1. 立足史实框架：事件、地理、职官、器物、称谓均须符合该时代真实情况。
+1. 严守设定：时代背景、地理、职官、器物、称谓、规则，均须与【本局世界设定】一致。
 2. 白描为主，节奏沉稳有力；用具体场景、动作、对话推进，避免空泛议论。
-3. 每个决断都要写出后果，且后果必须与决断构成因果关系，不能随机转折。
-4. 尊重历史人物：写出其立场、顾虑与局限，不脸谱化、不戏说、不美化也不丑化。
-5. 当情节触及需要审慎处理的历史内容时，以客观叙述方式呈现既有史实与多方立场，
-   把笔墨放在人物的处境、抉择与治理难题上，而不作评价或渲染。
+3. 每个行动都要写出后果，且后果必须与行动构成因果关系，不能随机转折。
+4. 人物要写出立场、顾虑与局限，不脸谱化、不戏说、不美化也不丑化。
+5. 当情节触及需要审慎处理的内容时，以客观叙述方式呈现既有事实与多方立场，
+   把笔墨放在人物的处境、抉择与两难上，而不作评价或渲染。
 6. 每一幕结尾留下真实的张力与两难，不要草率收束。''';
 
   /// 用户改坏了也能一键回到这里。
@@ -62,6 +78,12 @@ class PromptFramework {
 }
 
 /// 把三层拼成最终 system prompt。
+///
+/// 上下文分块的职责边界（**不能混**）：
+/// - 【本局世界设定】= 静态设定，每幕不变
+/// - 【当前世界状态】= 此刻是什么状态（现在时）
+/// - 【前情编年史】= 过去发生过什么（过去时）
+/// - 最近 N 幕原文 = 文风与细节的连续性
 class PromptBuilder {
   PromptBuilder._();
 
@@ -70,6 +92,7 @@ class PromptBuilder {
     required WorldBook book,
     String frameworkOverride = '',
     String chronicle = '',
+    String worldState = '',
   }) {
     final framework =
         frameworkOverride.trim().isEmpty ? PromptFramework.defaultText : frameworkOverride.trim();
@@ -91,6 +114,28 @@ class PromptBuilder {
     }
     if (book.extraRules.trim().isNotEmpty) {
       sb.writeln('附加规则与禁忌：${book.extraRules.trim()}');
+    }
+    if (book.playerGoal.trim().isNotEmpty) {
+      sb.writeln('玩家目标：${book.playerGoal.trim()}');
+    }
+    if (book.keyCharacters.trim().isNotEmpty) {
+      sb.writeln('关键人物：${book.keyCharacters.trim()}');
+    }
+    if (book.keyFactions.trim().isNotEmpty) {
+      sb.writeln('关键势力：${book.keyFactions.trim()}');
+    }
+    if (book.keyLocations.trim().isNotEmpty) {
+      sb.writeln('关键地点：${book.keyLocations.trim()}');
+    }
+    if (book.stateDimensions.trim().isNotEmpty) {
+      sb.writeln(
+        '状态维度（`<state>` 里重点盯住这些）：${book.stateDimensions.trim()}',
+      );
+    }
+    if (worldState.trim().isNotEmpty) {
+      sb.writeln();
+      sb.writeln('【当前世界状态（必须与之一致）】');
+      sb.writeln(worldState.trim());
     }
     if (chronicle.trim().isNotEmpty) {
       sb.writeln();

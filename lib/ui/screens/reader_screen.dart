@@ -8,11 +8,14 @@ import '../../data/secure_store.dart';
 import '../../models/app_config.dart';
 import '../../models/chapter_node.dart';
 import '../../models/save_slot.dart';
+import '../../models/world_state.dart';
 import '../../services/chronicle_service.dart';
 import '../../services/fallback_service.dart';
+import '../../services/game_session.dart';
 import '../../services/llm_client.dart';
 import '../../services/response_parser.dart';
 import '../../services/save_service.dart';
+import '../../services/world_state_service.dart';
 import '../themes/app_theme.dart';
 import '../widgets/choice_pill.dart';
 import '../widgets/free_input_bar.dart';
@@ -48,9 +51,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late AppConfig _config;
   late SaveSlot _slot;
 
-  List<ChapterNode> _history = <ChapterNode>[];
-  String _chronicle = '';
-  List<String> _choices = <String>[];
+  /// 状态与纯逻辑都在这里（可单测）；本类只负责展示与交互。
+  late GameSession _session;
+
+  // 读操作走 getter 委托，尽量少改动既有代码。
+  List<ChapterNode> get _history => _session.history;
+  String get _chronicle => _session.chronicle;
+  WorldState get _worldState => _session.worldState;
+  List<String> get _choices => _session.choices;
 
   bool _busy = false;
   String _pendingAction = '';
@@ -68,11 +76,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.initState();
     _config = widget.config;
     _slot = widget.slot;
-    _history = List<ChapterNode>.from(_slot.history);
-    _chronicle = _slot.chronicle;
-    if (_history.isNotEmpty) {
-      _choices = List<String>.from(_history.last.choices);
-    }
+    _session = GameSession(_slot);
     _scroll.addListener(_onScroll);
     _scheduleHeaderHide();
     _loadApiKey();
@@ -174,7 +178,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _pendingAction = action;
       _live = '';
       _typerBuffer = '';
-      _choices = <String>[];
+      _session.clearChoices();
       _notice = '';
       _degraded = false;
     });
@@ -191,6 +195,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       history: _history,
       playerAction: action,
       chronicle: _chronicle,
+      worldState: WorldStateService.renderForPrompt(_worldState),
     );
 
     await for (final ev in stream) {
@@ -214,21 +219,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
     _skipTyping();
 
-    if (parsed != null) {
-      final node = ChapterNode(
-        chapterIndex: _history.length + 1,
-        title: '第 ${_history.length + 1} 幕',
-        content: parsed.body,
-        playerAction: action,
-        date: parsed.date,
-        choices: parsed.choices,
-        glossary: parsed.glossary,
-        cast: parsed.cast,
-        rawOutput: parsed.rawOutput,
-      );
+    final p = parsed;
+    if (p != null) {
       setState(() {
-        _history = <ChapterNode>[..._history, node];
-        _choices = parsed!.choices;
+        // 合并世界状态、写入本幕快照，全在 GameSession 里完成
+        _session.appendChapter(
+          content: p.body,
+          playerAction: action,
+          date: p.date,
+          choices: p.choices,
+          glossary: p.glossary,
+          cast: p.cast,
+          rawOutput: p.rawOutput,
+          stateRaw: p.stateRaw,
+        );
         _live = '';
         _pendingAction = '';
         _busy = false;
@@ -249,9 +253,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   String _apiKey = '';
 
   Future<void> _persist() async {
-    _slot.history = _history;
-    _slot.chronicle = _chronicle;
-    await SaveService.upsert(_slot);
+    await SaveService.upsert(_session.toSlot());
   }
 
   Future<void> _maybeCompressChronicle() async {
@@ -266,12 +268,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
     if (!mounted) return;
     if (updated != _chronicle) {
-      setState(() => _chronicle = updated);
+      // 把新摘要记到最后一幕的快照上，这样以后回滚到这一幕时
+      // 能恢复到正确的编年史，而不是「未来」的版本。
+      setState(() => _session.attachChronicle(updated));
       await _persist();
     }
   }
 
-  /// 重新生成当前这一幕（回退一幕再重跑同样的决定）。
+  /// 重新生成当前这一幕。
+  ///
+  /// ⚠️ 必须先把 chronicle / worldState 恢复到**这一幕之前**的样子再重跑，
+  /// 否则第二次生成会继承第一次留下的状态（例如「张某已死」还在），
+  /// 整个状态就脏了。
   Future<void> _rerollLast() async {
     if (_busy || _history.isEmpty) return;
     final last = _history.last;
@@ -279,23 +287,49 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (action == null || action.trim().isEmpty) return;
 
     setState(() {
-      _history = _history.sublist(0, _history.length - 1);
-      _choices = _history.isEmpty ? <String>[] : _history.last.choices;
+      // 弹出最后一幕，并把 chronicle / worldState 恢复到这一幕**之前**
+      _session.popLastForReroll();
+      _live = '';
+      _pendingAction = '';
+      _notice = '';
     });
     await _act(action);
   }
 
   /// 回滚到第 [index] 幕（index 从 0 起），之后的内容全部丢弃。
+  ///
+  /// ⚠️ history / chronicle / worldState **三者必须回到同一个时间点**，
+  /// 否则模型会「记得」那些已经被撤销的未来。
   Future<void> _rollbackTo(int index) async {
     if (_busy) return;
-    final target = _history[index];
+    if (index < 0 || index >= _history.length) return;
+    final chapterNo = _history[index].chapterIndex;
+
+    // 回滚会永久丢弃后面的幕，先自动备份当前分支
+    await _backupBeforeRollback();
+    if (!mounted) return;
+
     setState(() {
-      _history = _history.sublist(0, index + 1);
-      _choices = List<String>.from(target.choices);
+      // history / chronicle / worldState 三者一起回到同一时间点
+      _session.rollbackTo(index);
       _live = '';
       _pendingAction = '';
+      _notice = '已回滚到第 $chapterNo 幕，其后的内容已丢弃。';
     });
     await _persist();
+  }
+
+  /// 回滚前自动备份当前分支。
+  ///
+  /// **单槽覆盖**：每个存档只保留一个备份槽，连续回滚不会堆出一堆重复存档。
+  /// 起点与上次相同（幕数一样）时不重复覆盖，避免把更早的分支冲掉。
+  Future<void> _backupBeforeRollback() async {
+    final backupId = 'backup_${_slot.id}';
+    final existing = await SaveService.findById(backupId);
+    if (!_session.shouldBackupOver(existing?.history.length)) return;
+    await SaveService.upsert(
+      _session.buildBackup(backupId: backupId, createdAt: existing?.createdAt),
+    );
   }
 
   void _cancel() {
@@ -435,7 +469,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       ),
                     ),
                     Text(
-                      '第 ${_history.length} 幕 · ${_slot.worldBook.era.isEmpty ? AppInfo.appName : _slot.worldBook.era}',
+                      _statusLine(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -470,6 +504,117 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  /// 顶栏第二行：极轻量，一行放下「第 N 幕 · 地点 · 时间」。
+  String _statusLine() {
+    final parts = <String>['第 ${_history.length} 幕'];
+    final summary = _worldState.inlineSummary;
+    if (summary.isNotEmpty) {
+      parts.add(summary);
+    } else if (_slot.worldBook.era.trim().isNotEmpty) {
+      parts.add(_slot.worldBook.era.trim());
+    }
+    return parts.join(' · ');
+  }
+
+  /// 世界观察：默认收起，只在用户主动点开时才展开。
+  /// 普通玩家只看小说，想看局势的人才用得到。
+  void _showWorldState() {
+    final theme = Theme.of(context);
+    final s = _worldState;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.72,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  '世界观察',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: s.isEmpty
+                        ? Text(
+                            '还没有世界状态。\n推演一幕之后，这里会记录此刻的时间、'
+                            '地点、人物关系与未决之事。',
+                            style: TextStyle(
+                              fontSize: 13,
+                              height: 1.8,
+                              color: theme.colorScheme.onSurface
+                                  .withValues(alpha: 0.6),
+                            ),
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              _stateSection(theme, '当前位置',
+                                  s.location.isEmpty ? '—' : s.location),
+                              _stateSection(theme, '当前时间',
+                                  s.time.isEmpty ? '—' : s.time),
+                              if (s.relations.isNotEmpty)
+                                _stateSection(
+                                  theme,
+                                  '重要人物',
+                                  s.relations.entries
+                                      .map((e) => '${e.key} · ${e.value}')
+                                      .join('\n'),
+                                ),
+                              if (s.events.isNotEmpty)
+                                _stateSection(
+                                    theme, '正在发生', s.events.join('\n')),
+                              if (s.facts.isNotEmpty)
+                                _stateSection(
+                                    theme, '你已知晓', s.facts.join('\n')),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _stateSection(ThemeData theme, String title, String body) => Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              body,
+              style: TextStyle(
+                fontSize: 13.5,
+                height: 1.7,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
+              ),
+            ),
+          ],
+        ),
+      );
+
   void _openMenu() {
     final theme = Theme.of(context);
     showModalBottomSheet<void>(
@@ -480,6 +625,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.explore_outlined),
+              title: const Text('世界观察'),
+              subtitle: const Text('此刻的时间、地点、人物与未决之事'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showWorldState();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.timeline_rounded),
               title: const Text('编年史时间线'),

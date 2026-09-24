@@ -63,12 +63,14 @@ class FallbackService {
     String workspaceId = '',
     String frameworkOverride = '',
     String chronicle = '',
+    String worldState = '',
   }) async* {
     final systemPrompt = PromptBuilder.buildSystemPrompt(
       config: config,
       book: book,
       frameworkOverride: frameworkOverride,
       chronicle: chronicle,
+      worldState: worldState,
     );
 
     AppError? lastError;

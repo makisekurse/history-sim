@@ -1,4 +1,5 @@
 import 'annotation.dart';
+import 'world_state.dart';
 
 /// 一幕推演节点。
 class ChapterNode {
@@ -22,6 +23,19 @@ class ChapterNode {
   /// 不用再靠猜。只存本地，超过 [rawOutputLimit] 会被截断。
   final String rawOutput;
 
+  /// 这一幕**结束后**的编年史快照。
+  ///
+  /// ⚠️ 回滚到第 N 幕时，编年史必须回到这一幕结束时的样子，
+  /// 否则模型会「记得」那些已经被撤销的未来。旧存档该字段为空，
+  /// 回滚时退回用顶层 chronicle（保守但不会串线）。
+  final String? chronicleAfter;
+
+  /// 这一幕**结束后**的世界状态快照。
+  ///
+  /// ⚠️ 每幕必须存一份 —— 只在存档顶层存一个「当前 state」是无法回滚到
+  /// 任意历史幕的（顶层存的永远是最新的那份）。
+  final WorldState? worldStateAfter;
+
   ChapterNode({
     required this.chapterIndex,
     required this.title,
@@ -32,6 +46,8 @@ class ChapterNode {
     List<GlossaryEntry>? glossary,
     List<CastEntry>? cast,
     this.rawOutput = '',
+    this.chronicleAfter,
+    this.worldStateAfter,
     DateTime? timestamp,
   })  : choices = choices ?? <String>[],
         glossary = glossary ?? <GlossaryEntry>[],
@@ -48,6 +64,8 @@ class ChapterNode {
         'glossary': glossary.map((e) => e.toJson()).toList(),
         'cast': cast.map((e) => e.toJson()).toList(),
         'rawOutput': _capped(rawOutput),
+        'chronicleAfter': chronicleAfter,
+        'worldStateAfter': worldStateAfter?.toJson(),
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -72,6 +90,12 @@ class ChapterNode {
                 .toList() ??
             <CastEntry>[],
         rawOutput: (json['rawOutput'] ?? '').toString(),
+        chronicleAfter: json['chronicleAfter']?.toString(),
+        worldStateAfter: json['worldStateAfter'] is Map
+            ? WorldState.fromJson(
+                Map<String, dynamic>.from(json['worldStateAfter'] as Map),
+              )
+            : null,
         timestamp: DateTime.tryParse((json['timestamp'] ?? '').toString()),
       );
 
@@ -79,6 +103,8 @@ class ChapterNode {
     String? content,
     List<String>? choices,
     String? date,
+    String? chronicleAfter,
+    WorldState? worldStateAfter,
   }) =>
       ChapterNode(
         chapterIndex: chapterIndex,
@@ -90,6 +116,8 @@ class ChapterNode {
         glossary: glossary,
         cast: cast,
         rawOutput: rawOutput,
+        chronicleAfter: chronicleAfter ?? this.chronicleAfter,
+        worldStateAfter: worldStateAfter ?? this.worldStateAfter,
         timestamp: timestamp,
       );
 

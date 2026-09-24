@@ -15,6 +15,27 @@ class WorldBook {
   String extraRules;
   String openingScene;
   List<String> openingChoices;
+
+  // ---- 2026-09-25 扩展：把世界书从「表单」升级成「进入世界前的设定」----
+  //
+  // 关键人物 / 势力 / 地点**允许为空** —— 不强迫用户为了开始一局填一堆字段。
+
+  /// 玩家目标：这一局你想做什么、想验证什么
+  String playerGoal;
+
+  /// 关键人物（自由文本，可空）
+  String keyCharacters;
+
+  /// 关键势力（自由文本，可空）
+  String keyFactions;
+
+  /// 关键地点（自由文本，可空）
+  String keyLocations;
+
+  /// 状态维度模板：告诉模型这份设定里 `<state>` 该盯住哪些维度。
+  /// 留空则用内置的通用五维（时间/地点/事实/关系/事件）。
+  String stateDimensions;
+
   final bool builtin;
   final DateTime createdAt;
 
@@ -28,6 +49,11 @@ class WorldBook {
     this.extraRules = '',
     this.openingScene = '',
     List<String>? openingChoices,
+    this.playerGoal = '',
+    this.keyCharacters = '',
+    this.keyFactions = '',
+    this.keyLocations = '',
+    this.stateDimensions = '',
     this.builtin = false,
     DateTime? createdAt,
   })  : openingChoices = openingChoices ?? <String>[],
@@ -64,6 +90,11 @@ class WorldBook {
     String? extraRules,
     String? openingScene,
     List<String>? openingChoices,
+    String? playerGoal,
+    String? keyCharacters,
+    String? keyFactions,
+    String? keyLocations,
+    String? stateDimensions,
   }) =>
       WorldBook(
         id: id,
@@ -75,6 +106,11 @@ class WorldBook {
         extraRules: extraRules ?? this.extraRules,
         openingScene: openingScene ?? this.openingScene,
         openingChoices: openingChoices ?? List<String>.from(this.openingChoices),
+        playerGoal: playerGoal ?? this.playerGoal,
+        keyCharacters: keyCharacters ?? this.keyCharacters,
+        keyFactions: keyFactions ?? this.keyFactions,
+        keyLocations: keyLocations ?? this.keyLocations,
+        stateDimensions: stateDimensions ?? this.stateDimensions,
         builtin: builtin,
         createdAt: createdAt,
       );
@@ -89,6 +125,11 @@ class WorldBook {
         'extraRules': extraRules,
         'openingScene': openingScene,
         'openingChoices': openingChoices,
+        'playerGoal': playerGoal,
+        'keyCharacters': keyCharacters,
+        'keyFactions': keyFactions,
+        'keyLocations': keyLocations,
+        'stateDimensions': stateDimensions,
         'builtin': builtin,
         'createdAt': createdAt.toIso8601String(),
       };
@@ -103,6 +144,11 @@ class WorldBook {
         extraRules: _str(json['extraRules']),
         openingScene: _str(json['openingScene']),
         openingChoices: _strList(json['openingChoices']),
+        playerGoal: _str(json['playerGoal']),
+        keyCharacters: _str(json['keyCharacters']),
+        keyFactions: _str(json['keyFactions']),
+        keyLocations: _str(json['keyLocations']),
+        stateDimensions: _str(json['stateDimensions']),
         builtin: json['builtin'] == true,
         createdAt:
             DateTime.tryParse(_str(json['createdAt'])) ?? DateTime.now(),
@@ -169,6 +215,14 @@ class WorldBook {
       'opening': 'openingScene',
       'intro': 'openingScene',
       'choices': 'openingChoices',
+      'goal': 'playerGoal',
+      'objective': 'playerGoal',
+      'characters': 'keyCharacters',
+      'npcs': 'keyCharacters',
+      'factions': 'keyFactions',
+      'locations': 'keyLocations',
+      'places': 'keyLocations',
+      'dimensions': 'stateDimensions',
     };
     final out = <String, dynamic>{};
     src.forEach((k, v) {

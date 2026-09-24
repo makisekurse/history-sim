@@ -239,4 +239,71 @@ class LlmClient {
       client.close();
     }
   }
+
+  /// 非流式补全。
+  ///
+  /// 用于需要**完整结构化输出**的场景（例如根据一句描述生成世界书）——
+  /// 流式没法保证 JSON 完整，所以这类调用必须走这里。
+  Future<String> complete({
+    required AppConfig config,
+    required String apiKey,
+    required List<Map<String, String>> messages,
+    String workspaceId = '',
+    int maxTokens = 2400,
+  }) async {
+    final url = Providers.chatCompletionsUrl(config, workspaceId: workspaceId);
+    final body = <String, dynamic>{
+      'model': config.modelName.trim().isEmpty
+          ? Providers.byId(config.apiProvider).defaultModel
+          : config.modelName.trim(),
+      'messages': messages,
+      'stream': false,
+      'temperature': 0.6,
+      'max_tokens': maxTokens,
+    };
+    if (Providers.supportsThinkingSwitch(config.modelName)) {
+      body['enable_thinking'] = false;
+    }
+
+    final client = http.Client();
+    try {
+      final resp = await client
+          .post(
+            Uri.parse(url),
+            headers: <String, String>{
+              'Authorization': 'Bearer ${apiKey.trim()}',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 90));
+
+      if (resp.statusCode != 200) {
+        throw AppError.fromStatus(resp.statusCode, resp.body);
+      }
+
+      final decoded = jsonDecode(utf8.decode(resp.bodyBytes));
+      if (decoded is Map) {
+        final choices = decoded['choices'];
+        if (choices is List && choices.isNotEmpty) {
+          final first = choices.first;
+          if (first is Map) {
+            final msg = first['message'];
+            if (msg is Map) {
+              final c = msg['content'];
+              if (c is String) return c;
+            }
+          }
+        }
+      }
+      throw const AppError(AppErrorKind.parse, '返回体里找不到内容。');
+    } on TimeoutException {
+      throw const AppError(
+        AppErrorKind.network,
+        '生成超时（90 秒），请稍后再试。',
+      );
+    } finally {
+      client.close();
+    }
+  }
 }

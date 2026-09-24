@@ -10,7 +10,14 @@ import '../../models/world_book.dart';
 class WorldBookEditorScreen extends StatefulWidget {
   final WorldBook book;
 
-  const WorldBookEditorScreen({super.key, required this.book});
+  /// 是否为「AI 生成后的预览」—— 只是换个措辞，落库时机由调用方决定。
+  final bool isPreview;
+
+  const WorldBookEditorScreen({
+    super.key,
+    required this.book,
+    this.isPreview = false,
+  });
 
   @override
   State<WorldBookEditorScreen> createState() => _WorldBookEditorScreenState();
@@ -25,6 +32,11 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
   late TextEditingController _rules;
   late TextEditingController _opening;
   late TextEditingController _choices;
+  late TextEditingController _goal;
+  late TextEditingController _characters;
+  late TextEditingController _factions;
+  late TextEditingController _locations;
+  late TextEditingController _dimensions;
 
   @override
   void initState() {
@@ -38,6 +50,11 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
     _rules = TextEditingController(text: b.extraRules);
     _opening = TextEditingController(text: b.openingScene);
     _choices = TextEditingController(text: b.openingChoices.join('\n'));
+    _goal = TextEditingController(text: b.playerGoal);
+    _characters = TextEditingController(text: b.keyCharacters);
+    _factions = TextEditingController(text: b.keyFactions);
+    _locations = TextEditingController(text: b.keyLocations);
+    _dimensions = TextEditingController(text: b.stateDimensions);
   }
 
   @override
@@ -51,6 +68,11 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
       _rules,
       _opening,
       _choices,
+      _goal,
+      _characters,
+      _factions,
+      _locations,
+      _dimensions,
     ]) {
       c.dispose();
     }
@@ -70,6 +92,11 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
             .map((e) => e.trim())
             .where((e) => e.isNotEmpty)
             .toList(),
+        playerGoal: _goal.text.trim(),
+        keyCharacters: _characters.text.trim(),
+        keyFactions: _factions.text.trim(),
+        keyLocations: _locations.text.trim(),
+        stateDimensions: _dimensions.text.trim(),
       );
 
   Future<void> _save() async {
@@ -101,7 +128,10 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
             icon: const Icon(Icons.ios_share_rounded),
             onPressed: _export,
           ),
-          TextButton(onPressed: _save, child: const Text('保存')),
+          TextButton(
+            onPressed: _save,
+            child: Text(widget.isPreview ? '确认并保存' : '保存'),
+          ),
         ],
       ),
       body: ListView(
@@ -129,6 +159,12 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
             required: true,
           ),
           _field(
+            _goal,
+            '玩家目标',
+            '这一局你想做什么、想验证什么。例如「尽量遵循历史，但允许自己的选择改变后续走向」',
+            maxLines: 3,
+          ),
+          _field(
             _style,
             '叙事文风',
             '例如：白描为主，沉稳遒劲，多用军情电报与公文语气；或：冷峻谍战笔法',
@@ -136,9 +172,34 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
           ),
           _field(
             _rules,
-            '附加规则与禁忌',
+            '世界规则与禁忌',
             '你不希望出现的内容，或必须遵守的设定',
             maxLines: 4,
+          ),
+          _field(
+            _characters,
+            '关键人物（选填）',
+            '一行一位：姓名 | 身份 | 立场。留空则由模型自行发挥',
+            maxLines: 5,
+          ),
+          _field(
+            _factions,
+            '关键势力（选填）',
+            '一行一方：名称 | 诉求 | 与主角的关系',
+            maxLines: 4,
+          ),
+          _field(
+            _locations,
+            '关键地点（选填）',
+            '一行一处：地名 | 意义',
+            maxLines: 4,
+          ),
+          _field(
+            _dimensions,
+            '状态维度模板（选填）',
+            '告诉模型每一幕的「当前世界状态」该盯住哪些维度。'
+                '留空则用通用五维：时间 / 地点 / 已知事实 / 人物关系 / 进行中事件',
+            maxLines: 3,
           ),
           _field(
             _opening,

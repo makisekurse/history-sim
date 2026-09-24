@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'core/app_info.dart';
 import 'data/prefs_store.dart';
 import 'models/app_config.dart';
-import 'ui/screens/library_screen.dart';
+import 'ui/screens/home_shell.dart';
 import 'ui/screens/onboarding_screen.dart';
 import 'ui/screens/settings_screen.dart';
 import 'ui/themes/app_theme.dart';
@@ -110,7 +110,7 @@ class _HistSimAppState extends State<HistSimApp> {
               onConfigure: () => _finishOnboarding(openSettings: true),
               onSkip: () => _finishOnboarding(openSettings: false),
             )
-          : LibraryScreen(
+          : HomeShell(
               config: _config,
               onConfigChanged: _updateConfig,
             ),

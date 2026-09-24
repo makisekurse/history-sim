@@ -1,7 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nijing/models/annotation.dart';
+import 'package:nijing/models/chapter_node.dart';
+import 'package:nijing/models/save_slot.dart';
 import 'package:nijing/models/world_book.dart';
+import 'package:nijing/models/world_state.dart';
+import 'package:nijing/services/game_session.dart';
 import 'package:nijing/services/response_parser.dart';
+import 'package:nijing/services/world_state_service.dart';
 
 void main() {
   group('WorldBook 导入', () {
@@ -215,6 +220,341 @@ void main() {
       final merged = a.merge(b);
       expect(merged.role, '司令员');
       expect(merged.stance, '观望');
+    });
+  });
+
+  group('WorldStateService · 解析', () {
+    test('标准格式', () {
+      final s = WorldStateService.parse('''
+时间：1949年11月23日 深夜
+地点：重庆市委机关
+事实：城东发生武装冲突；张某已经知道玩家在查资金
+关系：张某|谨慎；李某|信任
+事件：银行挤兑仍在持续；地方武装问题尚未解决
+''');
+      expect(s.time, '1949年11月23日 深夜');
+      expect(s.location, '重庆市委机关');
+      expect(s.facts.length, 2);
+      expect(s.relations['张某'], '谨慎');
+      expect(s.relations['李某'], '信任');
+      expect(s.events.length, 2);
+    });
+
+    test('容错：半角冒号 / 半角分号 / 英文键名 / 多余空行', () {
+      final s = WorldStateService.parse('''
+
+time: 1949年11月
+location: 重庆
+
+facts: 甲; 乙
+
+''');
+      expect(s.time, '1949年11月');
+      expect(s.location, '重庆');
+      expect(s.facts, <String>['甲', '乙']);
+    });
+
+    test('容错：键名带星号与序号前缀', () {
+      final s = WorldStateService.parse('**时间**：夜\n1. 地点：山城');
+      expect(s.time, '夜');
+      expect(s.location, '山城');
+    });
+
+    test('畸形输入不抛异常，返回空 state', () {
+      expect(WorldStateService.parse('').isEmpty, isTrue);
+      expect(WorldStateService.parse('乱七八糟没有冒号').isEmpty, isTrue);
+      expect(WorldStateService.parse('未知键：值').isEmpty, isTrue);
+    });
+  });
+
+  group('WorldStateService · 合并', () {
+    test('时间地点覆盖，事实整体替换', () {
+      final prev = WorldState(
+        time: '旧时间',
+        location: '旧地点',
+        facts: <String>['旧事实'],
+      );
+      final next = WorldStateService.merge(
+        prev,
+        WorldState(time: '新时间', facts: <String>['新事实']),
+      );
+      expect(next.time, '新时间');
+      expect(next.location, '旧地点'); // 新值为空则不覆盖
+      expect(next.facts, <String>['新事实']);
+    });
+
+    test('关系是增量：模型没提到的旧关系保留', () {
+      final prev = WorldState(relations: <String, String>{'张某': '谨慎'});
+      final next = WorldStateService.merge(
+        prev,
+        WorldState(relations: <String, String>{'李某': '信任'}),
+      );
+      expect(next.relations['张某'], '谨慎');
+      expect(next.relations['李某'], '信任');
+    });
+
+    test('关系同键时新值覆盖', () {
+      final prev = WorldState(relations: <String, String>{'张某': '谨慎'});
+      final next = WorldStateService.merge(
+        prev,
+        WorldState(relations: <String, String>{'张某': '敌视'}),
+      );
+      expect(next.relations['张某'], '敌视');
+    });
+
+    test('不修改传入的旧状态（避免快照被就地改坏）', () {
+      final prev = WorldState(facts: <String>['甲']);
+      WorldStateService.merge(prev, WorldState(facts: <String>['乙']));
+      expect(prev.facts, <String>['甲']);
+    });
+  });
+
+  group('WorldStateService · 上限与截断', () {
+    test('事实超过 12 条时截断', () {
+      final s = WorldState(
+        facts: List<String>.generate(20, (i) => '事实$i'),
+      );
+      final capped = WorldStateService.merge(s, WorldState());
+      expect(capped.facts.length, WorldState.maxFacts);
+    });
+
+    test('事件超过 8 条时截断', () {
+      final s = WorldState(
+        events: List<String>.generate(15, (i) => '事件$i'),
+      );
+      final capped = WorldStateService.merge(s, WorldState());
+      expect(capped.events.length, WorldState.maxEvents);
+    });
+
+    test('单条超长被截断并加省略号', () {
+      final long = '甲' * 300;
+      final s = WorldStateService.merge(
+        WorldState(),
+        WorldState(facts: <String>[long]),
+      );
+      expect(s.facts.first.length, lessThanOrEqualTo(WorldState.maxItemChars + 1));
+      expect(s.facts.first.endsWith('…'), isTrue);
+    });
+
+    test('重复条目去重', () {
+      final s = WorldStateService.merge(
+        WorldState(),
+        WorldState(facts: <String>['甲', '甲', '乙']),
+      );
+      expect(s.facts, <String>['甲', '乙']);
+    });
+
+    test('总预算兜底：超长时从尾部丢弃', () {
+      final s = WorldState(
+        facts: List<String>.generate(12, (i) => '甲' * 120),
+        events: List<String>.generate(8, (i) => '乙' * 120),
+      );
+      final capped = WorldStateService.merge(s, WorldState());
+      final total = capped.facts.fold<int>(0, (a, e) => a + e.length) +
+          capped.events.fold<int>(0, (a, e) => a + e.length);
+      expect(total, lessThanOrEqualTo(WorldState.maxTotalChars));
+    });
+  });
+
+  group('WorldStateService · 渲染', () {
+    test('渲染进 prompt', () {
+      final s = WorldState(
+        time: '夜',
+        location: '山城',
+        facts: <String>['甲'],
+        relations: <String, String>{'张': '谨慎'},
+        events: <String>['乙'],
+      );
+      final text = WorldStateService.renderForPrompt(s);
+      expect(text, contains('时间：夜'));
+      expect(text, contains('地点：山城'));
+      expect(text, contains('已知事实：甲'));
+      expect(text, contains('人物关系：张|谨慎'));
+      expect(text, contains('进行中事件：乙'));
+    });
+
+    test('空状态渲染为空串', () {
+      expect(WorldStateService.renderForPrompt(WorldState()), '');
+    });
+
+    test('inlineSummary 给游玩页顶部用', () {
+      final s = WorldState(time: '1949年11月23日', location: '重庆');
+      expect(s.inlineSummary, '重庆 · 1949年11月23日');
+    });
+  });
+
+  group('WorldState · 序列化', () {
+    test('往返等价', () {
+      final s = WorldState(
+        time: '夜',
+        location: '山城',
+        facts: <String>['甲'],
+        relations: <String, String>{'张': '谨慎'},
+        events: <String>['乙'],
+      );
+      final restored = WorldState.fromJson(s.toJson());
+      expect(restored.time, s.time);
+      expect(restored.facts, s.facts);
+      expect(restored.relations, s.relations);
+      expect(restored.events, s.events);
+    });
+
+    test('copy 是深拷贝', () {
+      final s = WorldState(facts: <String>['甲']);
+      final c = s.copy();
+      c.facts.add('乙');
+      expect(s.facts.length, 1);
+    });
+  });
+
+  group('GameSession · 回滚与 reroll 一致性', () {
+    SaveSlot newSlot() => SaveSlot(
+          id: 's1',
+          title: '测试局',
+          worldBook: WorldBook(
+            id: 'b1',
+            name: '测试世界',
+            worldview: '背景',
+            playerRole: '主角',
+          ),
+        );
+
+    void addChapter(GameSession s, String tag, String stateRaw) {
+      s.appendChapter(
+        content: '正文-$tag',
+        playerAction: '行动-$tag',
+        date: '第$tag天',
+        choices: <String>['选项A-$tag', '选项B-$tag'],
+        glossary: const <GlossaryEntry>[],
+        cast: const <CastEntry>[],
+        rawOutput: 'raw-$tag',
+        stateRaw: stateRaw,
+      );
+    }
+
+    test('appendChapter 写入状态快照', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天\n地点：甲地');
+      expect(s.chapterCount, 1);
+      expect(s.worldState.time, '第一天');
+      expect(s.history.last.worldStateAfter?.time, '第一天');
+      expect(s.history.last.worldStateAfter?.location, '甲地');
+    });
+
+    test('回滚到上一幕后，三者落在同一时间点', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天\n地点：甲地');
+      addChapter(s, '二', '时间：第二天\n地点：乙地');
+      s.attachChronicle('编年史-二');
+
+      s.rollbackTo(0);
+      expect(s.chapterCount, 1);
+      expect(s.worldState.time, '第一天');
+      expect(s.worldState.location, '甲地');
+      expect(s.choices.first, '选项A-一');
+      // 编年史也必须回到第一幕快照，而不是留在「未来」的版本
+      expect(s.chronicle, '');
+    });
+
+    test('回滚到中间幕', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      addChapter(s, '二', '时间：第二天');
+      addChapter(s, '三', '时间：第三天');
+      s.rollbackTo(1);
+      expect(s.chapterCount, 2);
+      expect(s.worldState.time, '第二天');
+    });
+
+    test('reroll 不继承上一次留下的状态（关键回归）', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      addChapter(s, '二', '时间：第二天\n关系：张某|已死');
+      expect(s.worldState.relations['张某'], '已死');
+
+      s.popLastForReroll();
+      // 必须回到第一幕结束时，不能还留着「张某已死」
+      expect(s.worldState.time, '第一天');
+      expect(s.worldState.relations.containsKey('张某'), isFalse);
+      expect(s.chapterCount, 1);
+    });
+
+    test('reroll 到开局时状态与编年史清空', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      s.attachChronicle('编年史');
+      s.popLastForReroll();
+      expect(s.chapterCount, 0);
+      expect(s.worldState.isEmpty, isTrue);
+      expect(s.chronicle, '');
+      expect(s.choices, isEmpty);
+    });
+
+    test('attachChronicle 只记到最后一幕快照上', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      addChapter(s, '二', '时间：第二天');
+      s.attachChronicle('新编年史');
+      expect(s.history.last.chronicleAfter, '新编年史');
+      expect(s.history.first.chronicleAfter, '');
+    });
+
+    test('旧存档没有快照字段时回滚不炸', () {
+      final slot = newSlot();
+      slot.history = <ChapterNode>[
+        ChapterNode(
+          chapterIndex: 1,
+          title: '一',
+          content: '正文',
+          choices: <String>['a', 'b'],
+        ),
+        ChapterNode(
+          chapterIndex: 2,
+          title: '二',
+          content: '正文',
+          choices: <String>['c', 'd'],
+        ),
+      ];
+      final s = GameSession(slot);
+      s.rollbackTo(0);
+      expect(s.chapterCount, 1);
+      expect(s.worldState.isEmpty, isTrue);
+    });
+
+    test('备份判断：起点不同才值得备份', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      expect(s.shouldBackupOver(null), isTrue);
+      expect(s.shouldBackupOver(1), isFalse); // 同一幕数，不重复覆盖
+      expect(s.shouldBackupOver(2), isTrue);
+    });
+
+    test('buildBackup 是深拷贝', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      final b = s.buildBackup(backupId: 'bk');
+      addChapter(s, '二', '时间：第二天');
+      expect(b.history.length, 1);
+    });
+
+    test('seedOpening 直接落第一幕', () {
+      final s = GameSession(newSlot());
+      s.seedOpening(
+        content: '开场',
+        date: '第一天',
+        choices: <String>['x', 'y'],
+      );
+      expect(s.chapterCount, 1);
+      expect(s.choices, <String>['x', 'y']);
+      expect(s.history.first.worldStateAfter, isNotNull);
+    });
+
+    test('toSlot 把状态写回存档', () {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天');
+      final slot = s.toSlot();
+      expect(slot.history.length, 1);
+      expect(slot.worldState.time, '第一天');
     });
   });
 }
