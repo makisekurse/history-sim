@@ -3,10 +3,11 @@ import 'package:flutter/material.dart';
 import '../../core/app_info.dart';
 import '../../services/update_service.dart';
 
-/// 关于页：版本号 + 构建来源 + 检查更新。
+/// 关于页。
 ///
-/// 版本号与 commit 由构建期注入，所以这里显示的永远是真实的构建来源 ——
-/// 交付时对得上「这包是从哪个提交出来的」。
+/// 刻意保持极简：只显示**开发者**与**版本号**，外加一个检查更新。
+/// 构建号 / commit / 包名这些是排障用的，属于内部信息，不摆在用户面前
+/// —— 真需要排查时，它们已经打在 Release 说明与 CI 日志里了。
 class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
@@ -28,7 +29,7 @@ class _AboutScreenState extends State<AboutScreen> {
     if (info == null) {
       setState(() {
         _checking = false;
-        _result = '检查失败：无法访问 GitHub（可能是网络或仓库为私有）。';
+        _result = '检查失败：无法访问更新服务（可能是网络问题）。';
       });
       return;
     }
@@ -51,40 +52,23 @@ class _AboutScreenState extends State<AboutScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('关于')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
         children: <Widget>[
           Center(
-            child: Column(
-              children: <Widget>[
-                Text(
-                  AppInfo.appName,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  AppInfo.slogan,
-                  style: TextStyle(fontSize: 12.5, color: muted),
-                ),
-              ],
+            child: Text(
+              AppInfo.appName,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2,
+                color: theme.colorScheme.onSurface,
+              ),
             ),
           ),
-          const SizedBox(height: 26),
+          const SizedBox(height: 32),
           _row(theme, '开发者', AppInfo.developer),
           _row(theme, '版本号', AppInfo.version),
-          _row(theme, '构建号', AppInfo.buildNumber),
-          _row(theme, '提交', AppInfo.shortSha),
-          _row(theme, '包名', 'io.github.makisekurse.nijing'),
-          const SizedBox(height: 20),
-          Text(
-            '世界书、存档、API Key 全部只保存在本机。'
-            '推演内容由你配置的大模型生成，应用本身不内置任何剧本。',
-            style: TextStyle(fontSize: 12.5, height: 1.7, color: muted),
-          ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
           OutlinedButton.icon(
             onPressed: _checking ? null : _checkUpdate,
             icon: _checking
@@ -96,7 +80,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 : const Icon(Icons.system_update_alt_rounded, size: 18),
             label: Text(_checking ? '正在检查…' : '检查更新'),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(vertical: 13),
               side: BorderSide(color: theme.dividerColor),
             ),
           ),
@@ -120,24 +104,11 @@ class _AboutScreenState extends State<AboutScreen> {
               ),
             ),
           ],
-          const SizedBox(height: 26),
+          const SizedBox(height: 18),
           Center(
-            child: Column(
-              children: <Widget>[
-                Text(
-                  '开发者：${AppInfo.developer}',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.75),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                SelectableText(
-                  AppInfo.repoUrl,
-                  style: TextStyle(fontSize: 11.5, color: muted),
-                ),
-              ],
+            child: Text(
+              '世界书与存档只保存在本机。',
+              style: TextStyle(fontSize: 11.5, color: muted),
             ),
           ),
         ],
@@ -147,16 +118,16 @@ class _AboutScreenState extends State<AboutScreen> {
 
   Widget _row(ThemeData theme, String label, String value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           SizedBox(
-            width: 68,
+            width: 72,
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 13.5,
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               ),
             ),
@@ -165,7 +136,7 @@ class _AboutScreenState extends State<AboutScreen> {
             child: SelectableText(
               value,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 13.5,
                 color: theme.colorScheme.onSurface,
               ),
             ),

@@ -190,8 +190,21 @@ class ResponseParser {
     return null;
   }
 
-  /// 按位置剔除所有结构块跨度，其余原样保留 —— 不做任何内容猜测式清洗。
+  /// 按位置剔除所有结构块跨度，其余原样保留。
+  ///
+  /// 只做两件事：**按位置**去掉结构块，**逐行**去掉模板占位文字。
+  /// 绝不按内容猜着删 —— 小说正文本身完全可能出现竖线、书名号，
+  /// 盲删会吃掉正文。
   static String _rebuildBody(String raw, List<_Block> blocks) {
+    final text = _removeBlockSpans(raw, blocks);
+    return text
+        .split('\n')
+        .where((l) => !isBodyNoise(l))
+        .join('\n')
+        .trim();
+  }
+
+  static String _removeBlockSpans(String raw, List<_Block> blocks) {
     if (blocks.isEmpty) return raw.trim();
     final sb = StringBuffer();
     var cursor = 0;
@@ -201,6 +214,65 @@ class ResponseParser {
     }
     if (cursor < raw.length) sb.write(raw.substring(cursor));
     return sb.toString().trim();
+  }
+
+  // ---------- 模板占位文字兜底过滤 ----------
+  //
+  // 2026-09-25 实机事故：内核提示词给了可直接照抄的内容行，模型就把它们
+  // 原样抄进了输出 —— 选项里混进「第一条可供主角决断的具体行动
+  // （一句话，30~60 字）」，正文里混进「（正文：约 500 字的白描叙事）」。
+  //
+  // 内核已改成空骨架（见 PromptKernel.build）。这里是**第二道防线**：
+  // 即使模型照抄了模板行，也进不了界面。
+
+  /// 列表项（choices / glossary / cast）里的模板占位行。
+  static final List<RegExp> _itemNoise = <RegExp>[
+    RegExp(r'^第[一二三四五六七八九十]条\s*可供主角决断的具体行动.*$'),
+    RegExp(r'^第[一二三四五六七八九十]条\s*[（(]\s*可选\s*[）)].*$'),
+    RegExp(r'^第[一二三四五六七八九十]条\s*行动\s*$'),
+    RegExp(r'^第[一二三四五六七八九十]条\s*$'),
+    RegExp(r'^[（(]\s*可选\s*[）)]$'),
+    RegExp(r'^生僻词条\s*\|.*解释.*$'),
+    RegExp(r'^人物姓名\s*\|.*身份.*$'),
+    RegExp(r'^词条\s*\|\s*一句话解释\s*$'),
+    RegExp(r'^姓名\s*\|\s*身份\s*\|\s*立场\s*$'),
+    RegExp(r'^[〈〈].*[〉〉]$'),
+  ];
+
+  /// 正文里的模板占位行。
+  ///
+  /// 刻意比 [_itemNoise] **窄** —— 正文是文学文本，宁可漏杀也不能误杀。
+  /// 例如 `〈…〉` 这种书名号在中文小说里是合法写法，所以不在这里过滤。
+  static final List<RegExp> _bodyNoise = <RegExp>[
+    // （正文：约 500 字的白描叙事）及其变体
+    RegExp(r'^[（(]\s*正文\s*[:：].*[）)]$'),
+    RegExp(r'^正文\s*[:：]\s*约?\s*\d*\s*字.*$'),
+    // 剧中日期，例如 1949年11月30日
+    RegExp(r'^剧中日期\s*[，,：:].*$'),
+    RegExp(r'^第[一二三四五六七八九十]条\s*可供主角决断的具体行动.*$'),
+    RegExp(r'^第[一二三四五六七八九十]条\s*[（(]\s*可选\s*[）)].*$'),
+  ];
+
+  /// 这一行是不是列表项里的模板占位文字。
+  static bool isTemplateNoise(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return false;
+    if (t.startsWith('<!--') || t.endsWith('-->')) return true;
+    for (final r in _itemNoise) {
+      if (r.hasMatch(t)) return true;
+    }
+    return false;
+  }
+
+  /// 这一行是不是正文里的模板占位文字。
+  static bool isBodyNoise(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return false;
+    if (t.startsWith('<!--') || t.endsWith('-->')) return true;
+    for (final r in _bodyNoise) {
+      if (r.hasMatch(t)) return true;
+    }
+    return false;
   }
 
   /// 判断一段输出是不是「拒答」。
@@ -242,8 +314,11 @@ class ResponseParser {
           .split('\n')
           .map((l) => l.trim())
           .where((l) => l.isNotEmpty)
+          // 兜底：模型可能把内核模板行原样抄进列表
+          .where((l) => !isTemplateNoise(l))
           .map(clean)
           .where((l) => l.isNotEmpty)
+          .where((l) => !isTemplateNoise(l))
           .toList();
 
   /// 去掉「1. 」「- 」「选项一：」这类前缀。

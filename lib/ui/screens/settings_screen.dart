@@ -73,10 +73,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   static const String _kWorkspace = 'nijing_workspace_id';
 
-  void _apply(AppConfig next, {bool persistKey = false}) {
+  /// 当前所选主题的一句话说明。
+  String _themeDesc() {
+    for (final p in AppTheme.presets) {
+      if (p.id == _config.themeMode) return p.desc;
+    }
+    return '';
+  }
+
+  /// 写入配置。
+  ///
+  /// [immediate] 用于**离散选择**（主题、字号、开关、选模型）——
+  /// 这类操作点一下就定了，必须立刻落盘。
+  ///
+  /// ⚠️ 2026-09-25 修：以前一律走 700ms 防抖，用户改完主题马上退出应用，
+  /// 改动就丢了 —— 表现为「设置没生效」。输入框与滑杆继续用防抖。
+  void _apply(
+    AppConfig next, {
+    bool persistKey = false,
+    bool immediate = false,
+  }) {
     setState(() => _config = next);
     widget.onConfigChanged(next);
-    PrefsStore.setStringDebounced('nijing_config_v1', next.encode());
+
+    final raw = next.encode();
+    if (immediate) {
+      PrefsStore.setString('nijing_config_v1', raw);
+    } else {
+      PrefsStore.setStringDebounced('nijing_config_v1', raw);
+    }
+
     if (persistKey) {
       SecureStore.writeApiKey(_keyCtrl.text.trim());
     }
@@ -205,7 +231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     label: Text(m, style: const TextStyle(fontSize: 12)),
                     onPressed: () {
                       _modelCtrl.text = m;
-                      _apply(_config.copyWith(modelName: m));
+                      _apply(_config.copyWith(modelName: m), immediate: true);
                     },
                   ),
                 )
@@ -294,47 +320,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(height: 40),
           _section(theme, '阅读体验'),
           const SizedBox(height: 12),
-          Row(
+          // 四套皮肤用 Wrap 排 —— 用 Row+Expanded 的话每个只有 70dp 宽，
+          // 「时代报章」这种四字标签会被挤到省略号。
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: AppTheme.presets
                 .map(
-                  (p) => Expanded(
-                    child: Padding(
-                      padding: EdgeInsets.only(
-                        right: p.id == AppTheme.presets.last.id ? 0 : 8,
-                      ),
-                      child: _chip(
-                        theme,
-                        label: p.label,
-                        selected: _config.themeMode == p.id,
-                        onTap: () =>
-                            _apply(_config.copyWith(themeMode: p.id)),
-                      ),
+                  (p) => _chip(
+                    theme,
+                    label: p.label,
+                    swatch: AppTheme.paletteOfId(p.id).page,
+                    selected: _config.themeMode == p.id,
+                    onTap: () => _apply(
+                      _config.copyWith(themeMode: p.id),
+                      immediate: true,
                     ),
                   ),
                 )
                 .toList(),
           ),
+          if (_themeDesc().isNotEmpty) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              _themeDesc(),
+              style: TextStyle(
+                fontSize: 12,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           _switchRow(
             theme,
             '竖排阅读',
             '正文改竖排，古典小说的读感',
             _config.verticalText,
-            (v) => _apply(_config.copyWith(verticalText: v)),
+            (v) => _apply(_config.copyWith(verticalText: v), immediate: true),
           ),
           _switchRow(
             theme,
             '顶栏自动隐藏',
             '轻触屏幕唤出，3 秒后自动淡出',
             _config.autoHideHeader,
-            (v) => _apply(_config.copyWith(autoHideHeader: v)),
+            (v) => _apply(_config.copyWith(autoHideHeader: v), immediate: true),
           ),
           _switchRow(
             theme,
             '打字机效果',
             '逐字渐现；生成中轻触屏幕可跳过',
             _config.typewriter,
-            (v) => _apply(_config.copyWith(typewriter: v)),
+            (v) => _apply(_config.copyWith(typewriter: v), immediate: true),
           ),
           const SizedBox(height: 14),
           Row(
@@ -359,7 +395,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     label: opt[1],
                     selected: _config.fontSize == opt[0],
                     onTap: () =>
-                        _apply(_config.copyWith(fontSize: opt[0])),
+                        _apply(_config.copyWith(fontSize: opt[0]), immediate: true),
                     compact: true,
                   ),
                 ),
@@ -406,6 +442,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required bool selected,
     required VoidCallback onTap,
     bool compact = false,
+    /// 可选预览色 —— 主题选择用它显示这套皮肤的实际观感
+    Color? swatch,
   }) {
     final primary = theme.colorScheme.primary;
     return InkWell(
@@ -425,15 +463,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
             width: selected ? 1.4 : 1,
           ),
         ),
-        child: Text(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: compact ? 12.5 : 12.5,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected ? primary : theme.colorScheme.onSurface,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            if (swatch != null) ...<Widget>[
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: swatch,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: theme.colorScheme.onSurface
+                        .withValues(alpha: 0.25),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  color: selected ? primary : theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

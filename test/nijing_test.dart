@@ -557,4 +557,94 @@ facts: 甲; 乙
       expect(slot.worldState.time, '第一天');
     });
   });
+
+  group('ResponseParser · 模板占位文字过滤', () {
+    // 2026-09-25 实机事故：内核提示词给了可直接照抄的内容行，模型把它们
+    // 原样抄进了输出。用户截图里选项混着「第一条可供主角决断的具体行动
+    // （一句话，30~60 字）」，正文混着「（正文：约 500 字的白描叙事）」。
+    // 内核已改空骨架，这里是第二道防线的回归。
+
+    test('选项里的模板行被剔除', () {
+      const raw = '''
+<date>1976年9月28日</date>
+夜色如墨，一辆不起眼的黑色轿车悄然驶离西山。
+
+<choices>
+第一条可供主角决断的具体行动（一句话，30~60 字）
+向叶帅提议立即起草政治定性文件，为行动提供法理依据。
+第二条可供主角决断的具体行动
+要求汪东兴派遣可信人员秘密前往上海，监控通讯线路。
+第三条（可选）
+决定暂不通知华国锋具体抓捕时间，仅要求其签署调令。
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.choices.length, 3);
+      for (final c in p.choices) {
+        expect(c.contains('可供主角决断的具体行动'), isFalse);
+        expect(c.contains('可选'), isFalse);
+      }
+      expect(p.choices.first.startsWith('向叶帅提议'), isTrue);
+      expect(p.choices.last.startsWith('决定暂不通知'), isTrue);
+    });
+
+    test('正文里的模板行被剔除', () {
+      const raw = '''
+<date>1976年9月28日</date>
+（正文：约 500 字的白描叙事）
+夜色如墨，一辆不起眼的黑色轿车悄然驶离西山。
+
+<choices>
+甲
+乙
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.body.contains('白描叙事'), isFalse);
+      expect(p.body.startsWith('夜色如墨'), isTrue);
+    });
+
+    test('正文里的合法书名号不会被误删', () {
+      const raw = '''
+<date>某日</date>
+他翻开《史记》，又想起〈滕王阁序〉里的句子。
+
+<choices>
+甲
+乙
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.body.contains('滕王阁序'), isTrue);
+    });
+
+    test('判定函数', () {
+      expect(
+        ResponseParser.isTemplateNoise('第一条可供主角决断的具体行动'),
+        isTrue,
+      );
+      expect(ResponseParser.isTemplateNoise('第三条（可选）'), isTrue);
+      expect(ResponseParser.isTemplateNoise('向叶帅提议起草文件'), isFalse);
+      expect(
+        ResponseParser.isBodyNoise('（正文：约 500 字的白描叙事）'),
+        isTrue,
+      );
+      expect(ResponseParser.isBodyNoise('夜色如墨'), isFalse);
+    });
+
+    test('状态块里的模板占位值被剔除', () {
+      final s = WorldStateService.parse('''
+时间：此刻的剧中时间
+地点：主角此刻所在
+事实：条目；条目（最多 12 条，按重要性从高到低）
+关系：姓名|此刻态度
+事件：进行中的事件
+''');
+      expect(s.time, '');
+      expect(s.location, '');
+      expect(s.facts, isEmpty);
+      expect(s.relations, isEmpty);
+      expect(s.events, isEmpty);
+    });
+  });
 }

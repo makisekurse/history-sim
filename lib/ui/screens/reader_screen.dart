@@ -78,6 +78,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _slot = widget.slot;
     _session = GameSession(_slot);
     _scroll.addListener(_onScroll);
+    _enterImmersive();
     _scheduleHeaderHide();
     _loadApiKey();
   }
@@ -88,7 +89,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _headerTimer?.cancel();
     _client.cancel();
     _scroll.dispose();
+    _exitImmersive();
     super.dispose();
+  }
+
+  // ---------- 沉浸模式 ----------
+  //
+  // 阅读时把系统状态栏与导航栏藏起来，让屏幕只剩文字。
+  //
+  // 用 immersiveSticky 而不是 immersive：从屏幕边缘上滑能临时唤出系统栏，
+  // 几秒后自动缩回 —— 用户随时能看到时间和电量，不会觉得「被困住」。
+
+  void _enterImmersive() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  void _exitImmersive() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   // ---------- 顶栏自动隐藏 ----------
@@ -101,9 +118,58 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
   }
 
-  void _toggleHeader() {
-    setState(() => _headerVisible = !_headerVisible);
-    if (_headerVisible) _scheduleHeaderHide();
+  /// 单击唤出顶栏 —— **只显示，不切换**。
+  ///
+  /// 之前是 toggle，导致「想唤出结果反而关掉了」，体感很怪。
+  /// 现在单击一律显示并重置自动隐藏计时；隐藏交给 3 秒定时器。
+  void _showHeader() {
+    if (!_headerVisible) {
+      setState(() => _headerVisible = true);
+    }
+    _scheduleHeaderHide();
+  }
+
+  // ---------- 原始指针：区分「单击」与「划选」 ----------
+  //
+  // 2026-09-25 实机事故：旧实现把 GestureDetector 放在 SelectionArea **外面**，
+  // 而 SelectionArea 会吃掉点击手势 —— 顶栏能不能唤出全看点在什么位置，
+  // 用户描述为「调出基本靠随机」。
+  //
+  // 改用 Listener 监听原始指针事件：它在手势竞技场之前触发，一定收得到。
+  // 再用「有没有拖动」「有没有选中文字」把单击与选择文本区分开。
+
+  Offset? _pointerDown;
+  bool _pointerMoved = false;
+  bool _hasSelection = false;
+
+  void _onPointerDown(PointerDownEvent e) {
+    _pointerDown = e.position;
+    _pointerMoved = false;
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    final d = _pointerDown;
+    if (d == null || _pointerMoved) return;
+    if ((e.position - d).distance > 10) _pointerMoved = true;
+  }
+
+  void _onPointerUp(PointerUpEvent e) {
+    final wasDrag = _pointerMoved;
+    _pointerDown = null;
+    _pointerMoved = false;
+
+    if (wasDrag) return; // 翻页或划选
+    if (_hasSelection) return; // 正在选中文本，单击多半是想取消选择
+
+    // 底部是行动区（选项胶囊 + 输入框），点它们不该顺带唤出顶栏
+    final h = MediaQuery.of(context).size.height;
+    if (h - e.position.dy < 150) return;
+
+    if (_busy) {
+      _skipTyping();
+      return;
+    }
+    _showHeader();
   }
 
   // ---------- 滚动跟随 ----------
@@ -355,15 +421,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
             Column(
               children: <Widget>[
                 Expanded(
-                  child: GestureDetector(
+                  child: Listener(
                     behavior: HitTestBehavior.translucent,
-                    onTap: () {
-                      if (_busy) {
-                        _skipTyping();
-                      } else {
-                        _toggleHeader();
-                      }
-                    },
+                    onPointerDown: _onPointerDown,
+                    onPointerMove: _onPointerMove,
+                    onPointerUp: _onPointerUp,
                     child: ListView(
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
@@ -372,6 +434,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         // ⚠️ 选择胶囊与输入框必须留在 SelectionArea **外面**，
                         // 否则选中手势会和按钮点击打架。
                         SelectionArea(
+                          onSelectionChanged: (value) =>
+                              _hasSelection = value != null,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
@@ -438,17 +502,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _header(ThemeData theme) {
+    final palette = AppTheme.readingOf(context);
     return AnimatedOpacity(
       opacity: _headerVisible ? 1 : 0,
       duration: const Duration(milliseconds: 240),
       child: IgnorePointer(
         ignoring: !_headerVisible,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
           decoration: BoxDecoration(
-            color: theme.scaffoldBackgroundColor.withValues(alpha: 0.94),
+            color: palette.scrim,
             border: Border(
-              bottom: BorderSide(color: theme.dividerColor, width: 0.8),
+              bottom: BorderSide(color: palette.rule, width: 0.8),
             ),
           ),
           child: Row(
@@ -465,37 +530,50 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.onSurface,
+                        color: palette.ink,
                       ),
                     ),
                     Text(
                       _statusLine(),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: theme.colorScheme.onSurface
-                            .withValues(alpha: 0.55),
-                      ),
+                      style: TextStyle(fontSize: 11.5, color: palette.muted),
                     ),
                   ],
                 ),
               ),
-              IconButton(
+              // 编年史 / 人物志 / 世界观察 / 更多 —— 顶栏就是内容入口
+              _headerAction(
+                palette,
+                icon: Icons.timeline_rounded,
                 tooltip: '编年史',
-                icon: Icon(Icons.timeline_rounded,
-                    color: theme.colorScheme.onSurface),
-                onPressed: () => Navigator.of(context).push(
+                onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => ChronicleScreen(history: _history),
                   ),
                 ),
               ),
-              IconButton(
+              _headerAction(
+                palette,
+                icon: Icons.groups_outlined,
+                tooltip: '人物志',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => CastScreen(history: _history),
+                  ),
+                ),
+              ),
+              _headerAction(
+                palette,
+                icon: Icons.explore_outlined,
+                tooltip: '世界观察',
+                onTap: _showWorldState,
+              ),
+              _headerAction(
+                palette,
+                icon: Icons.more_horiz_rounded,
                 tooltip: '更多',
-                icon: Icon(Icons.more_horiz_rounded,
-                    color: theme.colorScheme.onSurface),
-                onPressed: _openMenu,
+                onTap: _openMenu,
               ),
             ],
           ),
@@ -503,6 +581,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
+
+  Widget _headerAction(
+    ReadingPalette palette, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) =>
+      IconButton(
+        tooltip: tooltip,
+        iconSize: 20,
+        visualDensity: VisualDensity.compact,
+        icon: Icon(icon, color: palette.ink),
+        onPressed: onTap,
+      );
 
   /// 顶栏第二行：极轻量，一行放下「第 N 幕 · 地点 · 时间」。
   String _statusLine() {
@@ -762,23 +854,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _frontispiece(ThemeData theme) {
     final book = _slot.worldBook;
+    final palette = AppTheme.readingOf(context);
     return Container(
       margin: const EdgeInsets.only(top: 6, bottom: 26),
       padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 12),
       decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: theme.dividerColor),
-        ),
+        border: Border(bottom: BorderSide(color: palette.rule)),
       ),
       child: Column(
         children: <Widget>[
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
             decoration: BoxDecoration(
-              border: Border.all(
-                color: theme.colorScheme.primary,
-                width: 1.1,
-              ),
+              border: Border.all(color: palette.accent, width: 1.1),
               borderRadius: BorderRadius.circular(2),
             ),
             child: Text(
@@ -787,7 +875,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 fontSize: 11,
                 letterSpacing: 2,
                 fontWeight: FontWeight.w600,
-                color: theme.colorScheme.primary,
+                color: palette.accent,
               ),
             ),
           ),
@@ -799,7 +887,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               fontSize: 22,
               fontWeight: FontWeight.w600,
               height: 1.35,
-              color: theme.colorScheme.onSurface,
+              color: palette.ink,
             ),
           ),
           if (book.era.trim().isNotEmpty) ...<Widget>[
@@ -807,14 +895,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
             Text(
               book.era.trim(),
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12.5,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
+              style: TextStyle(fontSize: 12.5, color: palette.muted),
             ),
           ],
           const SizedBox(height: 14),
-          Container(width: 36, height: 2, color: theme.colorScheme.primary),
+          Container(width: 36, height: 2, color: palette.accent),
           const SizedBox(height: 12),
           Text(
             '你扮演：${book.playerRole.trim()}',
@@ -822,7 +907,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             style: TextStyle(
               fontSize: 12,
               height: 1.45,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              color: palette.muted,
             ),
           ),
         ],
@@ -836,6 +921,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     double fontSize,
     int index,
   ) {
+    final palette = AppTheme.readingOf(context);
     final act = chapter.playerAction;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -854,7 +940,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 1.1,
-                    color: theme.colorScheme.primary,
+                    color: palette.accent,
                   ),
                 ),
               ),
@@ -892,11 +978,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 fontSize: fontSize,
                 height: _config.lineHeight,
                 letterSpacing: _config.verticalText ? 1.6 : 0.4,
-                color: theme.colorScheme.onSurface,
+                color: palette.ink,
               ),
             ),
           ),
-        const Divider(height: 26),
+        Divider(height: 26, color: palette.rule),
       ],
     );
   }
@@ -1067,14 +1153,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _actionCard(ThemeData theme, String act) {
+    final palette = AppTheme.readingOf(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 16, top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.08),
+        color: palette.accent.withValues(alpha: 0.07),
         borderRadius: const BorderRadius.horizontal(right: Radius.circular(6)),
         border: Border(
-          left: BorderSide(color: theme.colorScheme.primary, width: 3),
+          left: BorderSide(color: palette.accent, width: 3),
         ),
       ),
       child: Row(
@@ -1085,7 +1172,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             style: TextStyle(
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
-              color: theme.colorScheme.primary,
+              color: palette.accent,
             ),
           ),
           Expanded(
@@ -1094,7 +1181,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               style: TextStyle(
                 fontSize: 13.5,
                 height: 1.5,
-                color: theme.colorScheme.onSurface,
+                color: palette.ink,
               ),
             ),
           ),
@@ -1104,6 +1191,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _liveView(ThemeData theme, double fontSize) {
+    final palette = AppTheme.readingOf(context);
     final preview = ResponseParser.stripForPreview(_live);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1119,7 +1207,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   valueColor:
-                      AlwaysStoppedAnimation<Color>(theme.colorScheme.primary),
+                      AlwaysStoppedAnimation<Color>(palette.accent),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1128,7 +1216,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.primary,
+                  color: palette.accent,
                 ),
               ),
             ],
@@ -1142,7 +1230,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               fontSize: fontSize,
               height: _config.lineHeight,
               letterSpacing: 0.4,
-              color: theme.colorScheme.onSurface,
+              color: palette.ink,
             ),
           ),
       ],
@@ -1150,21 +1238,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Widget _noticeView(ThemeData theme) {
+    final palette = AppTheme.readingOf(context);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.07),
+        color: palette.accent.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.dividerColor),
+        border: Border.all(color: palette.rule),
       ),
       child: Text(
         _notice,
         style: TextStyle(
           fontSize: 12.5,
           height: 1.6,
-          color: theme.colorScheme.onSurface.withValues(alpha: 0.85),
+          color: palette.ink,
         ),
       ),
     );

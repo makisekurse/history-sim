@@ -15,6 +15,9 @@ import 'ui/themes/app_theme.dart';
 const String kConfigKey = 'nijing_config_v1';
 const String kFirstRunKey = 'nijing_first_run_done';
 
+/// 主题迁移标记。见 [_loadConfig]。
+const String kThemeMigratedKey = 'nijing_theme_migrated_v2';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -32,17 +35,35 @@ Future<void> main() async {
 }
 
 Future<AppConfig> _loadConfig() async {
+  var config = AppConfig();
   final raw = await PrefsStore.getString(kConfigKey);
-  if (raw == null || raw.isEmpty) return AppConfig();
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is Map) {
-      return AppConfig.fromJson(Map<String, dynamic>.from(decoded));
+  if (raw != null && raw.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        config = AppConfig.fromJson(Map<String, dynamic>.from(decoded));
+      }
+    } catch (_) {
+      // 配置损坏时回落到默认值，不要让应用起不来。
     }
-  } catch (_) {
-    // 配置损坏时回落到默认值，不要让应用起不来。
   }
-  return AppConfig();
+
+  // ---- 一次性迁移：主题切到「拟境」----
+  //
+  // 老配置里存的主题（vintage / dark / parchment）都是按旧定位选的。
+  // 只改 `AppConfig` 的默认值没用 —— 用户存过的旧值会一直生效，
+  // 表现为「换了定位，主题还是那三个」。
+  //
+  // 用标记位保证**只迁一次**：之后用户在设置里怎么选就怎么算，
+  // 不会每次启动都被强行改回去。
+  final migrated = (await PrefsStore.getString(kThemeMigratedKey)) == 'done';
+  if (!migrated) {
+    config = config.copyWith(themeMode: AppTheme.defaultId);
+    await PrefsStore.setString(kConfigKey, config.encode());
+    await PrefsStore.setString(kThemeMigratedKey, 'done');
+  }
+
+  return config;
 }
 
 class HistSimApp extends StatefulWidget {
@@ -59,7 +80,7 @@ class HistSimApp extends StatefulWidget {
   State<HistSimApp> createState() => _HistSimAppState();
 }
 
-class _HistSimAppState extends State<HistSimApp> {
+class _HistSimAppState extends State<HistSimApp> with WidgetsBindingObserver {
   late AppConfig _config;
   late bool _onboarding;
 
@@ -68,6 +89,28 @@ class _HistSimAppState extends State<HistSimApp> {
     super.initState();
     _config = widget.initialConfig;
     _onboarding = widget.showOnboarding;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 退到后台 / 被系统回收前，把还在防抖窗口里的设置写入落盘。
+  ///
+  /// ⚠️ 2026-09-25 修：`PrefsStore.flush()` 之前**从未被调用**，
+  /// 用户改完设置马上退出应用，改动就丢了 —— 表现为「设置没生效」。
+  /// 现在离散选择已经改成立即落盘（见 SettingsScreen._apply），
+  /// 这里再兜住输入框/滑杆那类防抖写入。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      PrefsStore.flush();
+    }
   }
 
   void _updateConfig(AppConfig c) {

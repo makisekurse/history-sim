@@ -59,8 +59,7 @@ class WorldStateService {
           break;
         case 'location':
           state.location = _clean(value);
-          break;
-        case 'facts':
+          break;        case 'facts':
           state.facts = _splitList(value);
           break;
         case 'events':
@@ -189,7 +188,33 @@ class WorldStateService {
       .where((e) => e.isNotEmpty)
       .toList();
 
-  static String _clean(String s) => s.replaceFirst(_listMarker, '').trim();
+  static String _clean(String s) {
+    final t = s.replaceFirst(_listMarker, '').trim();
+    return _isPlaceholder(t) ? '' : t;
+  }
+
+  /// 内核模板里的占位值 —— 模型偶尔会把它们当成内容抄下来。
+  ///
+  /// 与解析器的模板过滤同一目的：**第二道防线**，保证占位文字进不了存档。
+  static bool _isPlaceholder(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return true;
+    const exact = <String>{
+      '条目',
+      '此刻的剧中时间',
+      '主角此刻所在',
+      '进行中的事件',
+      '姓名|此刻态度',
+      '一句话解释',
+      '身份职务',
+      '当前立场',
+      '条目；条目',
+    };
+    if (exact.contains(t)) return true;
+    // 「条目；条目（最多 12 条，按重要性从高到低）」这类带说明的占位
+    if (RegExp(r'[（(]\s*最多\s*\d+\s*条').hasMatch(t)) return true;
+    return false;
+  }
 
   /// 去掉列表标记（`1. ` / `1、` / `- ` / `* ` / `• `），但**不动合法数字**。
   ///

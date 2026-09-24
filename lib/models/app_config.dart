@@ -19,7 +19,7 @@ class AppConfig {
   /// 单幕目标字数，提示词里会带上。
   int maxWords;
 
-  /// 'vintage' | 'dark' | 'parchment'
+  /// 'mirage'（拟境，默认）| 'vintage' | 'dark' | 'parchment'
   String themeMode;
 
   /// 'sm' | 'md' | 'lg'
@@ -42,7 +42,7 @@ class AppConfig {
     this.modelName = 'qwen3.8-flash',
     this.temperature = 0.85,
     this.maxWords = 500,
-    this.themeMode = 'vintage',
+    this.themeMode = 'mirage',
     this.fontSize = 'md',
     this.lineHeight = 1.9,
     this.verticalText = false,
@@ -70,7 +70,7 @@ class AppConfig {
         modelName: (json['modelName'] ?? 'qwen3.8-flash').toString(),
         temperature: (json['temperature'] as num?)?.toDouble() ?? 0.85,
         maxWords: (json['maxWords'] as num?)?.toInt() ?? 500,
-        themeMode: (json['themeMode'] ?? 'vintage').toString(),
+        themeMode: (json['themeMode'] ?? 'mirage').toString(),
         fontSize: (json['fontSize'] ?? 'md').toString(),
         lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.9,
         verticalText: json['verticalText'] == true,
