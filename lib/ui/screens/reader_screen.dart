@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_info.dart';
 import '../../data/secure_store.dart';
@@ -223,6 +224,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         choices: parsed.choices,
         glossary: parsed.glossary,
         cast: parsed.cast,
+        rawOutput: parsed.rawOutput,
       );
       setState(() {
         _history = <ChapterNode>[..._history, node];
@@ -332,11 +334,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                       children: <Widget>[
-                        _frontispiece(theme),
-                        for (var i = 0; i < _history.length; i++)
-                          _chapterView(theme, _history[i], fontSize, i),
-                        if (_busy) _liveView(theme, fontSize),
-                        if (_notice.isNotEmpty) _noticeView(theme),
+                        // 阅读区整体可长按选中复制。
+                        // ⚠️ 选择胶囊与输入框必须留在 SelectionArea **外面**，
+                        // 否则选中手势会和按钮点击打架。
+                        SelectionArea(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              _frontispiece(theme),
+                              for (var i = 0; i < _history.length; i++)
+                                _chapterView(theme, _history[i], fontSize, i),
+                              if (_busy) _liveView(theme, fontSize),
+                              if (_notice.isNotEmpty) _noticeView(theme),
+                            ],
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         if (!_busy) ...<Widget>[
                           if (_history.isEmpty && _choices.isEmpty)
@@ -704,6 +716,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   Icons.groups_outlined,
                   () => AnnotationSheet.showCast(context, chapter.cast),
                 ),
+              _miniAction(
+                theme,
+                Icons.more_horiz_rounded,
+                () => _chapterMenu(chapter),
+              ),
             ],
           ),
         ),
@@ -745,6 +762,156 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  /// 本幕操作菜单。复制与原始输出都收在这里，不占用正文空间，
+  /// 也不破坏「像小说阅读器」的观感。
+  void _chapterMenu(ChapterNode chapter) {
+    final theme = Theme.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('复制本幕'),
+              subtitle: const Text('标题 + 你的行动 + 正文'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _copyChapter(chapter);
+              },
+            ),
+            if (chapter.glossary.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.menu_book_rounded),
+                title: const Text('本幕词条'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  AnnotationSheet.showGlossary(context, chapter.glossary);
+                },
+              ),
+            if (chapter.cast.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.groups_rounded),
+                title: const Text('本幕人物'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  AnnotationSheet.showCast(context, chapter.cast);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.data_object_rounded),
+              title: const Text('查看原始输出'),
+              subtitle: Text(
+                chapter.rawOutput.isEmpty
+                    ? '本幕没有留存原始输出'
+                    : '模型返回的原文，用于排查格式问题',
+              ),
+              enabled: chapter.rawOutput.isNotEmpty,
+              onTap: () {
+                Navigator.pop(ctx);
+                _showRawOutput(chapter);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyChapter(ChapterNode chapter) async {
+    final sb = StringBuffer();
+    sb.writeln(chapter.date.trim().isEmpty
+        ? chapter.title
+        : '${chapter.title} · ${chapter.date.trim()}');
+    final act = chapter.playerAction;
+    if (act != null && act.trim().isNotEmpty) {
+      sb.writeln();
+      sb.writeln('【你的行动】${act.trim()}');
+    }
+    if (chapter.content.trim().isNotEmpty) {
+      sb.writeln();
+      sb.writeln(chapter.content.trim());
+    }
+    await Clipboard.setData(ClipboardData(text: sb.toString().trim()));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('本幕已复制到剪贴板')),
+    );
+  }
+
+  /// 排障用：直接把模型返回的原文摊开。
+  /// 「为什么这次 cast 又漏了」——不用再猜，看一眼就知道。
+  void _showRawOutput(ChapterNode chapter) {
+    final theme = Theme.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    const Expanded(
+                      child: Text(
+                        '模型原始输出',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(text: chapter.rawOutput),
+                        );
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('原始输出已复制')),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.copy_rounded, size: 16),
+                      label: const Text('复制'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      chapter.rawOutput,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.6,
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _actionCard(ThemeData theme, String act) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16, top: 4),
@@ -760,7 +927,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            '【决定】 ',
+            '【你的行动】 ',
             style: TextStyle(
               fontSize: 13.5,
               fontWeight: FontWeight.w600,

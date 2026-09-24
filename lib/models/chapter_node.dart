@@ -1,10 +1,11 @@
 import 'annotation.dart';
 
 /// 一幕推演节点。
-///
-/// 相比旧版新增 `date`（剧中日期）、`glossary`（随文注释）、`cast`（出场人物），
-/// 后者支撑「长按看词条」与「人物志」两个功能。
 class ChapterNode {
+  /// 模型原始输出保留上限（按字符计，约 30KB）。
+  /// 异常模型输出不至于把存档无限撑大。
+  static const int rawOutputLimit = 30000;
+
   final int chapterIndex;
   final String title;
   final String content;
@@ -15,6 +16,12 @@ class ChapterNode {
   final List<CastEntry> cast;
   final DateTime timestamp;
 
+  /// 模型返回的**原始文本**（未清洗），仅用于排障。
+  ///
+  /// 有了它，「为什么这次 cast 又漏了」可以直接翻出来看模型到底吐了什么，
+  /// 不用再靠猜。只存本地，超过 [rawOutputLimit] 会被截断。
+  final String rawOutput;
+
   ChapterNode({
     required this.chapterIndex,
     required this.title,
@@ -24,6 +31,7 @@ class ChapterNode {
     List<String>? choices,
     List<GlossaryEntry>? glossary,
     List<CastEntry>? cast,
+    this.rawOutput = '',
     DateTime? timestamp,
   })  : choices = choices ?? <String>[],
         glossary = glossary ?? <GlossaryEntry>[],
@@ -39,6 +47,7 @@ class ChapterNode {
         'choices': choices,
         'glossary': glossary.map((e) => e.toJson()).toList(),
         'cast': cast.map((e) => e.toJson()).toList(),
+        'rawOutput': _capped(rawOutput),
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -62,6 +71,7 @@ class ChapterNode {
                 .map((e) => CastEntry.fromJson(Map<String, dynamic>.from(e)))
                 .toList() ??
             <CastEntry>[],
+        rawOutput: (json['rawOutput'] ?? '').toString(),
         timestamp: DateTime.tryParse((json['timestamp'] ?? '').toString()),
       );
 
@@ -79,6 +89,10 @@ class ChapterNode {
         choices: choices ?? this.choices,
         glossary: glossary,
         cast: cast,
+        rawOutput: rawOutput,
         timestamp: timestamp,
       );
+
+  static String _capped(String s) =>
+      s.length <= rawOutputLimit ? s : '${s.substring(0, rawOutputLimit)}\n…（已截断）';
 }

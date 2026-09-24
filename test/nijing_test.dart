@@ -44,49 +44,147 @@ void main() {
     });
   });
 
-  group('ResponseParser', () {
-    const sample = '''
-<date>1949年11月30日</date>
-重庆解放了。雾气笼罩着山城。
+  group('ResponseParser · 标准与变体标签', () {
+    const body = '他知道，从这一刻起，每一步都走在刀尖之上。';
+    const choices =
+        '<choices>\n1. 立即组建专项工作组\n2. 暂缓行动，暗中调查\n</choices>';
+    const cast =
+        '<cast>\n邓小平|中共中央副主席|主持日常工作\n王洪文|中共中央副主席|暗中阻挠\n</cast>';
+    const glossary = '<glossary>\n绥靖公署|战时军政合一的区域性机构\n</glossary>';
 
-<choices>
-1. 立即调运川北粮食入渝平价倾销
-2. 出动纠察队封锁黑市，取缔银元交易
-</choices>
-
-<glossary>
-袁大头|民国时期流通的银元
-袍哥|四川地区的帮会组织
-</glossary>
-
-<cast>
-刘伯承|第二野战军司令员|坚定支持
-</cast>
-''';
-
-    test('拆出正文与全部结构块', () {
-      final parsed = ResponseParser.parse(sample);
-      expect(parsed.date, '1949年11月30日');
-      expect(parsed.choices.length, 2);
-      expect(parsed.choices.first.startsWith('立即调运'), isTrue);
-      expect(parsed.glossary.length, 2);
-      expect(parsed.glossary.first.term, '袁大头');
-      expect(parsed.cast.length, 1);
-      expect(parsed.cast.first.name, '刘伯承');
-      expect(parsed.body.contains('<choices>'), isFalse);
-      expect(parsed.body.contains('重庆解放了'), isTrue);
-      expect(parsed.hasUsableChoices, isTrue);
+    test('标准形态：正文干净，三块都抽走', () {
+      final p = ResponseParser.parse('$body\n\n$choices\n\n$glossary\n\n$cast');
+      expect(p.body, body);
+      expect(p.choices.length, 2);
+      expect(p.glossary.length, 1);
+      expect(p.cast.length, 2);
+      expect(p.hasUsableChoices, isTrue);
     });
 
-    test('缺 choices 时判定不可用', () {
-      final parsed = ResponseParser.parse('只有一段正文，没有结构块。');
-      expect(parsed.hasUsableChoices, isFalse);
+    test('开标签带空格 < cast >', () {
+      final p = ResponseParser.parse('$body\n\n< cast >\n邓小平|甲\n</cast>');
+      expect(p.body, body);
+      expect(p.cast.length, 1);
     });
 
-    test('流式预览会隐藏半截标签', () {
-      const streaming = '正文开始…\n\n<choices>\n第一条';
-      final preview = ResponseParser.stripForPreview(streaming);
+    test('闭标签带空格 </cast >', () {
+      final p = ResponseParser.parse('$body\n\n<cast>\n邓小平|甲\n</cast >');
+      expect(p.body, body);
+      expect(p.cast.length, 1);
+    });
+
+    test('全角尖括号 ＜cast＞', () {
+      final p = ResponseParser.parse('$body\n\n＜cast＞\n邓小平|甲\n＜/cast＞');
+      expect(p.body, body);
+      expect(p.cast.length, 1);
+    });
+
+    test('中文书名号《cast》', () {
+      final p = ResponseParser.parse('$body\n\n《cast》\n邓小平|甲\n《/cast》');
+      expect(p.body, body);
+      expect(p.cast.length, 1);
+    });
+
+    test('标签大小写混用 <Cast>…</CAST>', () {
+      final p = ResponseParser.parse('$body\n\n<Cast>\n邓小平|甲\n</CAST>');
+      expect(p.body, body);
+      expect(p.cast.length, 1);
+    });
+
+    test('未闭合块：从开标签吃到文末', () {
+      final p = ResponseParser.parse('$body\n\n<cast>\n邓小平|甲\n李先念|乙');
+      expect(p.body, body);
+      expect(p.cast.length, 2);
+    });
+
+    test('第二个块未闭合，不影响前面的提取', () {
+      final p = ResponseParser.parse('$body\n\n$choices\n\n<cast>\n邓小平|甲');
+      expect(p.body, body);
+      expect(p.choices.length, 2);
+      expect(p.cast.length, 1);
+    });
+
+    test('空结构块', () {
+      final p = ResponseParser.parse('$body\n\n<cast>\n</cast>\n\n$choices');
+      expect(p.body, body);
+      expect(p.cast, isEmpty);
+      expect(p.choices.length, 2);
+    });
+
+    test('块在正文之前', () {
+      final p = ResponseParser.parse('$cast\n\n$body\n\n$choices');
+      expect(p.body, body);
+      expect(p.cast.length, 2);
+      expect(p.choices.length, 2);
+    });
+
+    test('多个同名块合并', () {
+      final p = ResponseParser.parse(
+        '$body\n\n<cast>\n邓小平|甲\n</cast>\n\n<cast>\n李先念|乙\n</cast>',
+      );
+      expect(p.body, body);
+      expect(p.cast.length, 2);
+    });
+
+    test('截断输出：有正文无 choices', () {
+      final p = ResponseParser.parse('$body\n\n<choices>\n1. 只有一条');
+      expect(p.body, body);
+      expect(p.hasUsableChoices, isFalse);
+    });
+
+    test('date 与 state 也能抽走', () {
+      final p = ResponseParser.parse(
+        '<date>1949年11月30日</date>\n$body\n\n<state>\ntime: 夜\n</state>',
+      );
+      expect(p.date, '1949年11月30日');
+      expect(p.stateRaw, contains('time'));
+      expect(p.body, body);
+    });
+
+    test('rawOutput 保存原始文本', () {
+      final raw = '$body\n\n$cast';
+      final p = ResponseParser.parse(raw);
+      expect(p.rawOutput, raw);
+    });
+  });
+
+  group('ResponseParser · 不做过度清洗（关键回归）', () {
+    test('正文里的竖线行必须原样保留', () {
+      const raw = '他翻开名册，上面写着：\n\n张三|县令|谨慎\n李四|主簿|亲善\n\n'
+          '这行字让他久久没有说话。';
+      final p = ResponseParser.parse(raw);
+      expect(p.body, contains('张三|县令|谨慎'));
+      expect(p.body, contains('李四|主簿|亲善'));
+      expect(p.cast, isEmpty);
+    });
+
+    test('正文里出现尖括号但不构成标签时保留', () {
+      const raw = '他写道：「此事<不可说>，慎之。」';
+      final p = ResponseParser.parse(raw);
+      expect(p.body, contains('<不可说>'));
+    });
+
+    test('结构块被剔除后，前后正文都还在', () {
+      final p = ResponseParser.parse(
+        '前半段正文。\n\n<cast>\n甲|乙\n</cast>\n\n后半段正文。',
+      );
+      expect(p.body, contains('前半段正文。'));
+      expect(p.body, contains('后半段正文。'));
+      expect(p.body.contains('cast'), isFalse);
+    });
+  });
+
+  group('ResponseParser · 流式预览', () {
+    test('未闭合标签在预览里也要藏掉', () {
+      final preview =
+          ResponseParser.stripForPreview('正文开始…\n\n<choices>\n第一条');
       expect(preview.contains('<choices>'), isFalse);
+      expect(preview.contains('正文开始'), isTrue);
+    });
+
+    test('正在流入的半截标签不闪出', () {
+      final preview = ResponseParser.stripForPreview('正文开始…\n\n<ca');
+      expect(preview.contains('<ca'), isFalse);
       expect(preview.contains('正文开始'), isTrue);
     });
 
