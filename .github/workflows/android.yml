@@ -1,5 +1,9 @@
 name: Build APK
 
+# 出包与发版**分开**：
+#   - 推 main / 手动触发 → 只构建 + 上传 Artifact，**不发 Release**
+#   - 打 v* 标签        → 构建 + 发布 Release（这一步才算"发包"）
+# 想发版时告诉一声，打个标签即可。
 on:
   push:
     branches: [main]
@@ -103,14 +107,14 @@ jobs:
           path: build/app/outputs/flutter-apk/${{ steps.apk.outputs.name }}
           if-no-files-found: error
 
-      # 发布：推 main 就更新一个滚动版本号 v1.0.<run_number> 的 Release，
-      # 打 v* 标签则发布到对应标签。Release Notes 由 GitHub 从 commit 自动生成。
+      # 发布：**只有推 v* 标签才发 Release**。
+      # 推 main 只出 Artifact，避免每次提交都自动发包。
       - name: Publish release
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', env.BUILD_NUMBER) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v1.0.{0}', env.BUILD_NUMBER) }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           files: build/app/outputs/flutter-apk/${{ steps.apk.outputs.name }}
           generate_release_notes: true
           make_latest: true
