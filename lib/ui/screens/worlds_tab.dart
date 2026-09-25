@@ -7,6 +7,9 @@ import '../../models/world_book.dart';
 /// 列表是用户自己建的/导入的世界书；应用不内置任何剧本。
 class WorldsTab extends StatelessWidget {
   final List<WorldBook> books;
+
+  /// 每本书已有的进度（bookId → 幕数）。有进度的显示「继续 · 第 N 幕」。
+  final Map<String, int> progressByBook;
   final VoidCallback onCreate;
   final VoidCallback onImport;
   final ValueChanged<WorldBook> onEdit;
@@ -16,6 +19,7 @@ class WorldsTab extends StatelessWidget {
   const WorldsTab({
     super.key,
     required this.books,
+    required this.progressByBook,
     required this.onCreate,
     required this.onImport,
     required this.onEdit,
@@ -199,7 +203,11 @@ class WorldsTab extends StatelessWidget {
                                 side: BorderSide(color: theme.dividerColor),
                               ),
                               child: Text(
-                                b.isPlayable ? '进入这个世界' : '还缺必填项，点开补全',
+                                !b.isPlayable
+                                    ? '还缺必填项，点开补全'
+                                    : (progressByBook[b.id] ?? 0) > 0
+                                        ? '继续 · 第 ${progressByBook[b.id]} 幕'
+                                        : '进入这个世界',
                                 style: const TextStyle(fontSize: 13),
                               ),
                             ),

@@ -5,6 +5,7 @@ import '../../data/secure_store.dart';
 import '../../models/app_config.dart';
 import '../../services/llm_client.dart';
 import '../../services/providers.dart';
+import '../../services/text_layout.dart';
 import '../themes/app_theme.dart';
 
 /// 设置分区。
@@ -442,13 +443,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onChanged: (v) => _apply(_config.copyWith(lineHeight: v)),
         ),
 
-        _switchRow(
+        // 文字排版：段首缩进格数 + 段间距。
+        // 以前是一个「首行缩进 开/关」的布尔开关 —— 但真正要调的是"缩几格"，
+        // 而且那个开关因为分段逻辑的 bug 根本没生效过。
+        _chipRow(
           theme,
-          '首行缩进',
-          '段首空两格，中文排版的习惯读感',
-          _config.indentFirstLine,
-          (v) => _apply(_config.copyWith(indentFirstLine: v), immediate: true),
+          label: '段首缩进',
+          options: TextLayout.indentOptions,
+          selected: '${_config.paragraphIndent}',
+          onPick: (v) => _apply(
+            _config.copyWith(paragraphIndent: int.tryParse(v) ?? 0),
+            immediate: true,
+          ),
         ),
+        _chipRow(
+          theme,
+          label: '段间距',
+          options: TextLayout.spacingOptions,
+          selected: _config.paragraphSpacing,
+          onPick: (v) => _apply(
+            _config.copyWith(paragraphSpacing: v),
+            immediate: true,
+          ),
+        ),
+        const SizedBox(height: 8),
         _switchRow(
           theme,
           '打开时跳到最新一幕',
@@ -541,6 +559,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
   }
+
+  /// 一行「标签 + 若干互斥选项」。
+  Widget _chipRow(
+    ThemeData theme, {
+    required String label,
+    required List<List<String>> options,
+    required String selected,
+    required ValueChanged<String> onPick,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: <Widget>[
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            const Spacer(),
+            for (final opt in options)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: _chip(
+                  theme,
+                  label: opt[1],
+                  selected: selected == opt[0],
+                  onTap: () => onPick(opt[0]),
+                  compact: true,
+                ),
+              ),
+          ],
+        ),
+      );
 
   Widget _switchRow(
     ThemeData theme,

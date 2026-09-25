@@ -15,6 +15,7 @@ import '../../services/game_session.dart';
 import '../../services/llm_client.dart';
 import '../../services/response_parser.dart';
 import '../../services/save_service.dart';
+import '../../services/text_layout.dart';
 import '../../services/world_state_service.dart';
 import '../themes/app_theme.dart';
 import '../widgets/choice_pill.dart';
@@ -127,17 +128,32 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _scheduleHeaderHide();
   }
 
+  /// 最新一幕的锚点。跳转用它而不是 `maxScrollExtent`。
+  final GlobalKey _latestKey = GlobalKey();
+
   /// 打开推演时跳到最新一幕。
   ///
   /// 「继续进入」的语义就是**接着上次的进度往下** —— 默认停在第一幕的话，
   /// 用户得手动翻到底，等于每次进来都要重新找位置。
+  ///
+  /// ⚠️ 不用 `jumpTo(maxScrollExtent)` 一步到位：ListView 是懒加载的，
+  /// 首帧之后 `maxScrollExtent` 只反映**已经铺出来**的那部分，直接跳会落在半路。
+  /// 所以先 `ensureVisible` 定位到最后一幕，下一帧再补一次到底。
   void _maybeJumpToLatest() {
     if (!_config.autoScrollToLatest) return;
     if (_history.isEmpty) return;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      _atBottom = true;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      final ctx = _latestKey.currentContext;
+      if (ctx != null) {
+        _atBottom = true;
+        Scrollable.ensureVisible(ctx, duration: Duration.zero, alignment: 1);
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scroll.hasClients) return;
+        _atBottom = true;
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      });
     });
   }
 
@@ -412,7 +428,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             children: <Widget>[
                               _frontispiece(theme),
                               for (var i = 0; i < _history.length; i++)
-                                _chapterView(theme, _history[i], fontSize, i),
+                                _chapterView(
+                                  theme,
+                                  _history[i],
+                                  fontSize,
+                                  i,
+                                  anchorKey: i == _history.length - 1
+                                      ? _latestKey
+                                      : null,
+                                ),
                               if (_busy) _liveView(theme, fontSize),
                               if (_notice.isNotEmpty) _noticeView(theme),
                             ],
@@ -890,11 +914,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     ThemeData theme,
     ChapterNode chapter,
     double fontSize,
-    int index,
-  ) {
+    int index, {
+    Key? anchorKey,
+  }) {
     final palette = AppTheme.readingOf(context);
     final act = chapter.playerAction;
     return Column(
+      key: anchorKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         if (act != null && act.trim().isNotEmpty) _actionCard(theme, act),
@@ -935,14 +961,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ],
           ),
         ),
-        for (final para in chapter.content
-            .split('\n\n')
-            .where((p) => p.trim().isNotEmpty))
+        for (final para in TextLayout.paragraphs(chapter.content))
           Padding(
-            padding: const EdgeInsets.only(bottom: 16),
+            padding: EdgeInsets.only(
+              bottom: TextLayout.spacing(_config.paragraphSpacing),
+            ),
             child: Text(
-              // 中文排版惯例：段首缩进两格（用两个全角空格，不是 4 个半角）
-              _config.indentFirstLine ? '　　${para.trim()}' : para.trim(),
+              // 段首缩进用全角空格（U+3000）—— 中文字体下才等于一个汉字宽
+              '${TextLayout.indent(_config.paragraphIndent)}$para',
               textAlign: TextAlign.justify,
               style: TextStyle(
                 fontSize: fontSize,
@@ -1194,7 +1220,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
         if (preview.isNotEmpty)
           Text(
-            _config.indentFirstLine ? '　　$preview' : preview,
+            '${TextLayout.indent(_config.paragraphIndent)}$preview',
             textAlign: TextAlign.justify,
             style: TextStyle(
               fontSize: fontSize,

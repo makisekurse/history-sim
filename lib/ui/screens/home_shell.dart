@@ -8,6 +8,7 @@ import '../../models/app_config.dart';
 import '../../models/chapter_node.dart';
 import '../../models/save_slot.dart';
 import '../../models/world_book.dart';
+import '../../models/world_state.dart';
 import '../../services/save_service.dart';
 import 'about_screen.dart';
 import 'continue_tab.dart';
@@ -77,6 +78,104 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   // ---------- 进入世界 ----------
+  //
+  // ⚠️ 2026-09-25 修：以前每次「进入这个世界」都无条件 SaveSlot.newId() 建新槽，
+  // 于是两件事同时坏掉：
+  //   1. 「最近推演」每进一次就多一条（同一本书反复出现）
+  //   2. 「继续进入」可能开到一个只到第一幕的旧槽 —— 用户看到的就是「跳回第一幕」
+  //
+  // 现在改成**一本书一局**：进入时先找这本书已有的存档，有就接着玩，
+  // 没有才新建。想重开走「重新开始一局」（会清空当前进度，带确认）。
+
+  /// 这本书已有的存档（最近的、非备份）。
+  SaveSlot? _slotForBook(String bookId) {
+    for (final s in _slots) {
+      if (s.worldBook.id == bookId) return s;
+    }
+    return null;
+  }
+
+  /// 每本书的进度，给世界列表显示「继续 · 第 N 幕」用。
+  Map<String, int> get _progressByBook => <String, int>{
+        for (final s in _slots) s.worldBook.id: s.chapterCount,
+      };
+
+  Future<void> _startSessionWith(WorldBook book) async {
+    final existing = _slotForBook(book.id);
+    if (existing != null) {
+      await _openReader(existing);
+      return;
+    }
+    await _createSession(book);
+  }
+
+  /// 新建一局（不检查是否已有存档）。
+  Future<void> _createSession(WorldBook book) async {
+    final slot = SaveSlot(
+      id: SaveSlot.newId(),
+      title: book.name,
+      worldBook: book,
+    );
+
+    // 世界书自带开篇就直接落第一幕，省一次模型调用，也让作者掌控开场。
+    if (book.openingScene.trim().isNotEmpty) {
+      slot.history = <ChapterNode>[
+        ChapterNode(
+          chapterIndex: 1,
+          title: '第一幕',
+          content: book.openingScene.trim(),
+          date: book.era.trim(),
+          choices: book.openingChoices,
+        ),
+      ];
+    }
+
+    await SaveService.upsert(slot);
+    await _setActiveSlot(slot.id);
+    await _reload();
+    if (!mounted) return;
+    await _openReader(slot);
+  }
+
+  /// 重新开始一局。
+  ///
+  /// **清空已有存档的进度，而不是再建一个新槽** —— 再建新槽的话
+  /// 「最近推演」又会多出一条，正是之前那个 bug。
+  Future<void> _restartBook(WorldBook book, {bool confirm = true}) async {
+    final existing = _slotForBook(book.id);
+    if (existing == null) {
+      await _createSession(book);
+      return;
+    }
+
+    if (confirm) {
+      final ok = await _confirm(
+        '重新开始《${book.name}》？\n'
+        '当前进度（第 ${existing.chapterCount} 幕）会被清空，无法恢复。',
+      );
+      if (!ok) return;
+    }
+
+    existing.history = <ChapterNode>[];
+    existing.chronicle = '';
+    existing.worldState = WorldState();
+    if (book.openingScene.trim().isNotEmpty) {
+      existing.history = <ChapterNode>[
+        ChapterNode(
+          chapterIndex: 1,
+          title: '第一幕',
+          content: book.openingScene.trim(),
+          date: book.era.trim(),
+          choices: book.openingChoices,
+        ),
+      ];
+    }
+    await SaveService.upsert(existing);
+    await _setActiveSlot(existing.id);
+    await _reload();
+    if (!mounted) return;
+    await _openReader(existing);
+  }
 
   Future<void> _newSession() async {
     if (_books.isEmpty) {
@@ -106,45 +205,66 @@ class _HomeShellState extends State<HomeShell> {
             for (final b in playable)
               ListTile(
                 title: Text(b.name, style: const TextStyle(fontSize: 14.5)),
-                subtitle: b.era.trim().isEmpty
-                    ? null
-                    : Text(b.era, style: const TextStyle(fontSize: 12)),
+                subtitle: Text(
+                  _slotForBook(b.id) == null
+                      ? (b.era.trim().isEmpty ? '还没开始' : b.era)
+                      : '已有进度 · 第 ${_slotForBook(b.id)!.chapterCount} 幕',
+                  style: const TextStyle(fontSize: 12),
+                ),
                 onTap: () => Navigator.pop(ctx, b),
               ),
           ],
         ),
       ),
     );
-    if (book == null) return;
+    if (book == null || !mounted) return;
 
-    await _startSessionWith(book);
-  }
-
-  Future<void> _startSessionWith(WorldBook book) async {
-    final slot = SaveSlot(
-      id: SaveSlot.newId(),
-      title: book.name,
-      worldBook: book,
-    );
-
-    // 世界书自带开篇就直接落第一幕，省一次模型调用，也让作者掌控开场。
-    if (book.openingScene.trim().isNotEmpty) {
-      slot.history = <ChapterNode>[
-        ChapterNode(
-          chapterIndex: 1,
-          title: '第一幕',
-          content: book.openingScene.trim(),
-          date: book.era.trim(),
-          choices: book.openingChoices,
-        ),
-      ];
+    final existing = _slotForBook(book.id);
+    if (existing == null) {
+      await _createSession(book);
+      return;
     }
 
-    await SaveService.upsert(slot);
-    await _setActiveSlot(slot.id);
-    await _reload();
-    if (!mounted) return;
-    await _openReader(slot);
+    // 这本书已经有一局了 —— 让用户明确选，不要默默新建一条
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '《${book.name}》已经有一局了',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.play_arrow_rounded),
+              title: Text('继续 · 第 ${existing.chapterCount} 幕'),
+              onTap: () => Navigator.pop(ctx, 'resume'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.restart_alt_rounded),
+              title: const Text('重新开始一局'),
+              subtitle: const Text('当前进度会被清空'),
+              onTap: () => Navigator.pop(ctx, 'restart'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    if (choice == 'resume') {
+      await _openReader(existing);
+    } else {
+      await _restartBook(book, confirm: false);
+    }
   }
 
   Future<void> _openReader(SaveSlot slot) async {
@@ -164,13 +284,14 @@ class _HomeShellState extends State<HomeShell> {
 
   // ---------- 世界书 ----------
 
-  Future<void> _editBook(WorldBook book) async {
-    await Navigator.of(context).push(
+  Future<WorldBook?> _editBook(WorldBook book) async {
+    final saved = await Navigator.of(context).push<WorldBook>(
       MaterialPageRoute<WorldBook>(
         builder: (_) => WorldBookEditorScreen(book: book),
       ),
     );
     await _reload();
+    return saved;
   }
 
   Future<void> _createBook() async {
@@ -211,11 +332,37 @@ class _HomeShellState extends State<HomeShell> {
       return;
     }
 
+    // ⚠️ **不预先落库** —— 编辑器里点保存时才写。
+    // 以前先 upsert 再打开编辑器，用户退出来就留下一本空白世界书，
+    // 反复几次「世界书数目」就对不上了。
     final book = WorldBook.blank();
-    await WorldBookRepository.upsert(book);
-    await _reload();
     if (!mounted) return;
     await _editBook(book);
+  }
+
+  /// 空白世界书：既没写背景也没写角色，等于创建后没填就退出了。
+  List<WorldBook> get _blankBooks => _books
+      .where((b) => b.worldview.trim().isEmpty && b.playerRole.trim().isEmpty)
+      .toList();
+
+  Future<void> _purgeBlankBooks() async {
+    final blanks = _blankBooks;
+    if (blanks.isEmpty) {
+      _toast('没有空白世界书。');
+      return;
+    }
+    final ok = await _confirm(
+      '删除 ${blanks.length} 本空白世界书？\n'
+      '${blanks.map((b) => '· ${b.name}').take(8).join('\n')}'
+      '${blanks.length > 8 ? '\n…' : ''}\n\n'
+      '这些是创建后没填内容就退出的，删掉不影响任何推演。',
+    );
+    if (!ok) return;
+    for (final b in blanks) {
+      await WorldBookRepository.delete(b.id);
+    }
+    await _reload();
+    if (mounted) _toast('已清理 ${blanks.length} 本空白世界书');
   }
 
   Future<void> _importBook() async {
@@ -320,6 +467,18 @@ class _HomeShellState extends State<HomeShell> {
                 _startSessionWith(book);
               },
             ),
+            if (_slotForBook(book.id) != null)
+              ListTile(
+                leading: const Icon(Icons.restart_alt_rounded),
+                title: const Text('重新开始一局'),
+                subtitle: Text(
+                  '当前进度第 ${_slotForBook(book.id)!.chapterCount} 幕，会被清空',
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _restartBook(book);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.edit_rounded),
               title: const Text('编辑'),
@@ -438,9 +597,14 @@ class _HomeShellState extends State<HomeShell> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    _backups.isEmpty
-                        ? '世界书与存档只保存在本机，不会上传。'
-                        : '另有 ${_backups.length} 份回滚备份（回滚前自动生成，不计入推演）。',
+                    <String>[
+                      if (_blankBooks.isNotEmpty)
+                        '${_blankBooks.length} 本世界书是空白的（创建后没填内容就退出）',
+                      if (_backups.isNotEmpty)
+                        '${_backups.length} 份回滚备份（回滚前自动生成，不计入推演）',
+                      if (_blankBooks.isEmpty && _backups.isEmpty)
+                        '世界书与存档只保存在本机，不会上传。',
+                    ].join('\n'),
                     style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
                   ),
                 ],
@@ -472,6 +636,16 @@ class _HomeShellState extends State<HomeShell> {
                 if (mounted) _toast('已复制 ${_slots.length} 个推演存档');
               },
             ),
+            if (_blankBooks.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.cleaning_services_outlined),
+                title: const Text('清理空白世界书'),
+                subtitle: Text('删除 ${_blankBooks.length} 本没填过内容的世界书'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _purgeBlankBooks();
+                },
+              ),
             if (_backups.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.cleaning_services_outlined),
@@ -555,6 +729,7 @@ class _HomeShellState extends State<HomeShell> {
                 children: <Widget>[
                   WorldsTab(
                     books: _books,
+                    progressByBook: _progressByBook,
                     onCreate: _createBook,
                     onImport: _importBook,
                     onEdit: _editBook,

@@ -27,8 +27,14 @@ class AppConfig {
 
   double lineHeight;
 
-  /// 正文首行缩进两格（中文排版习惯）
-  bool indentFirstLine;
+  /// 段首缩进格数（0 / 1 / 2）。
+  ///
+  /// 以前是个布尔开关（首行缩进 开/关），但中文排版里"缩几格"才是真正
+  /// 要调的参数，所以改成可选的格数。
+  int paragraphIndent;
+
+  /// 段间距：'tight' | 'normal' | 'loose'
+  String paragraphSpacing;
 
   /// 打开推演时自动跳到最新一幕。
   ///
@@ -48,7 +54,8 @@ class AppConfig {
     this.themeMode = 'mirage',
     this.fontSize = 'md',
     this.lineHeight = 1.9,
-    this.indentFirstLine = true,
+    this.paragraphIndent = 2,
+    this.paragraphSpacing = 'normal',
     this.autoScrollToLatest = true,
     this.autoHideHeader = true,
   });
@@ -62,7 +69,8 @@ class AppConfig {
         'themeMode': themeMode,
         'fontSize': fontSize,
         'lineHeight': lineHeight,
-        'indentFirstLine': indentFirstLine,
+        'paragraphIndent': paragraphIndent,
+        'paragraphSpacing': paragraphSpacing,
         'autoScrollToLatest': autoScrollToLatest,
         'autoHideHeader': autoHideHeader,
       };
@@ -76,7 +84,10 @@ class AppConfig {
         themeMode: (json['themeMode'] ?? 'mirage').toString(),
         fontSize: (json['fontSize'] ?? 'md').toString(),
         lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.9,
-        indentFirstLine: json['indentFirstLine'] != false,
+        // 旧配置里是布尔 `indentFirstLine`：开 → 两格，关 → 顶格
+        paragraphIndent: (json['paragraphIndent'] as num?)?.toInt() ??
+            (json['indentFirstLine'] == false ? 0 : 2),
+        paragraphSpacing: (json['paragraphSpacing'] ?? 'normal').toString(),
         autoScrollToLatest: json['autoScrollToLatest'] != false,
         autoHideHeader: json['autoHideHeader'] != false,
       );
@@ -90,7 +101,8 @@ class AppConfig {
     String? themeMode,
     String? fontSize,
     double? lineHeight,
-    bool? indentFirstLine,
+    int? paragraphIndent,
+    String? paragraphSpacing,
     bool? autoScrollToLatest,
     bool? autoHideHeader,
   }) =>
@@ -103,7 +115,8 @@ class AppConfig {
         themeMode: themeMode ?? this.themeMode,
         fontSize: fontSize ?? this.fontSize,
         lineHeight: lineHeight ?? this.lineHeight,
-        indentFirstLine: indentFirstLine ?? this.indentFirstLine,
+        paragraphIndent: paragraphIndent ?? this.paragraphIndent,
+        paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
         autoScrollToLatest: autoScrollToLatest ?? this.autoScrollToLatest,
         autoHideHeader: autoHideHeader ?? this.autoHideHeader,
       );

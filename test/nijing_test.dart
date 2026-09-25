@@ -6,6 +6,7 @@ import 'package:nijing/models/world_book.dart';
 import 'package:nijing/models/world_state.dart';
 import 'package:nijing/services/game_session.dart';
 import 'package:nijing/services/response_parser.dart';
+import 'package:nijing/services/text_layout.dart';
 import 'package:nijing/services/world_state_service.dart';
 
 void main() {
@@ -590,6 +591,49 @@ facts: 甲; 乙
       );
       final restored = SaveSlot.fromJson(slot.toJson());
       expect(restored.isBackup, isTrue);
+    });
+  });
+
+  group('TextLayout · 正文分段与缩进', () {
+    // 2026-09-25：「首行缩进」开关加了没效果，根因就在分段 ——
+    // 旧代码只按 `\n\n` 切段，模型经常用单个 `\n`，整篇被当成一个段落，
+    // 只在最开头缩进一次，看起来就像没生效。
+
+    test('单个换行也能切段', () {
+      expect(TextLayout.paragraphs('第一段\n第二段\n第三段'),
+          <String>['第一段', '第二段', '第三段']);
+    });
+
+    test('空行切段', () {
+      expect(TextLayout.paragraphs('第一段\n\n第二段'),
+          <String>['第一段', '第二段']);
+    });
+
+    test('CRLF 也能切', () {
+      expect(TextLayout.paragraphs('第一段\r\n第二段'),
+          <String>['第一段', '第二段']);
+    });
+
+    test('连续空行不会产生空段落', () {
+      expect(TextLayout.paragraphs('甲\n\n\n\n乙\n   \n丙'),
+          <String>['甲', '乙', '丙']);
+    });
+
+    test('缩进用全角空格', () {
+      expect(TextLayout.indent(2), '　　');
+      expect(TextLayout.indent(2).length, 2);
+      expect(TextLayout.indent(0), '');
+    });
+
+    test('缩进越界会被夹住', () {
+      expect(TextLayout.indent(-3), '');
+      expect(TextLayout.indent(99).length, 4);
+    });
+
+    test('段间距三档', () {
+      expect(TextLayout.spacing('tight'), lessThan(TextLayout.spacing('normal')));
+      expect(TextLayout.spacing('loose'), greaterThan(TextLayout.spacing('normal')));
+      expect(TextLayout.spacing('未知值'), TextLayout.spacing('normal'));
     });
   });
 
