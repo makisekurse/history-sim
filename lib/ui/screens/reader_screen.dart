@@ -8,6 +8,7 @@ import '../../data/secure_store.dart';
 import '../../models/app_config.dart';
 import '../../models/chapter_node.dart';
 import '../../models/save_slot.dart';
+import '../../models/world_line.dart';
 import '../../models/world_state.dart';
 import '../../services/chronicle_service.dart';
 import '../../services/fallback_service.dart';
@@ -142,7 +143,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _maybeJumpToLatest() {
     if (!_config.autoScrollToLatest) return;
     if (_history.isEmpty) return;
+    _jumpToLatest();
+  }
 
+  /// 跳到最新一幕。切换世界线后也走这里。
+  void _jumpToLatest() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _latestKey.currentContext;
       if (ctx != null) {
@@ -351,39 +356,110 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await _act(action);
   }
 
-  /// 回滚到第 [index] 幕（index 从 0 起），之后的内容全部丢弃。
-  ///
-  /// ⚠️ history / chronicle / worldState **三者必须回到同一个时间点**，
-  /// 否则模型会「记得」那些已经被撤销的未来。
-  Future<void> _rollbackTo(int index) async {
+  // ---------- 世界线 ----------
+  //
+  // 2026-09-25 改：原来的「回滚」是**单向销毁** —— 把后面的幕丢掉，
+  // 只留一个会被下次覆盖的备份槽，而且没有任何入口能再打开它。
+  //
+  // 现在换成**世界线分支**：从第 k 幕分岔出一条新线，**原来的线原样保留**，
+  // 玩家随时能在多条线之间查看和切换，各线的进度与选择记录互不干扰。
+
+  /// 从第 [index] 幕分岔出一条新世界线，并切过去。
+  Future<void> _branchFrom(int index) async {
     if (_busy) return;
     if (index < 0 || index >= _history.length) return;
     final chapterNo = _history[index].chapterIndex;
 
-    // 回滚会永久丢弃后面的幕，先自动备份当前分支
-    await _backupBeforeRollback();
-    if (!mounted) return;
-
+    final branch = _session.branchFrom(index);
     setState(() {
-      // history / chronicle / worldState 三者一起回到同一时间点
-      _session.rollbackTo(index);
       _live = '';
       _pendingAction = '';
-      _notice = '已回滚到第 $chapterNo 幕，其后的内容已丢弃。';
+      _notice = '已从第 $chapterNo 幕分岔出「${branch.name}」。'
+          '原世界线已保留，可在「世界线」里随时切回。';
+    });
+    await _persist();
+    _jumpToLatest();
+  }
+
+  /// 切换世界线。切换后正文、世界状态、编年史、可选行动全部换成那条线的。
+  Future<void> _switchLine(String lineId) async {
+    if (_busy) return;
+    setState(() {
+      _session.switchLine(lineId);
+      _live = '';
+      _pendingAction = '';
+      _notice = '';
+    });
+    await _persist();
+    _jumpToLatest();
+  }
+
+  Future<void> _renameLine(WorldLine target) async {
+    final ctrl = TextEditingController(text: target.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名世界线', style: TextStyle(fontSize: 15)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '例如：走西南路线'),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (name == null || !mounted) return;
+    setState(() => _session.renameLine(target.id, name));
+    await _persist();
+  }
+
+  Future<void> _deleteLine(WorldLine target) async {
+    if (_session.lines.length <= 1) {
+      _toast('至少要保留一条世界线。');
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Text(
+          '删除「${target.name}」？\n它的 ${target.chapterCount} 幕进度会一起消失，无法恢复。',
+          style: const TextStyle(fontSize: 14, height: 1.7),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      _session.deleteLine(target.id);
+      _live = '';
+      _pendingAction = '';
     });
     await _persist();
   }
 
-  /// 回滚前自动备份当前分支。
-  ///
-  /// **单槽覆盖**：每个存档只保留一个备份槽，连续回滚不会堆出一堆重复存档。
-  /// 起点与上次相同（幕数一样）时不重复覆盖，避免把更早的分支冲掉。
-  Future<void> _backupBeforeRollback() async {
-    final backupId = SaveSlot.backupIdFor(_slot.id);
-    final existing = await SaveService.findById(backupId);
-    if (!_session.shouldBackupOver(existing?.history.length)) return;
-    await SaveService.upsert(
-      _session.buildBackup(backupId: backupId, createdAt: existing?.createdAt),
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
     );
   }
 
@@ -591,9 +667,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
         onPressed: onTap,
       );
 
-  /// 顶栏第二行：极轻量，一行放下「第 N 幕 · 地点 · 时间」。
+  /// 顶栏第二行：极轻量。有分支时把当前世界线名也带上。
   String _statusLine() {
-    final parts = <String>['第 ${_history.length} 幕'];
+    final parts = <String>[];
+    if (_session.lines.length > 1) parts.add(_session.line.name);
+    parts.add('第 ${_history.length} 幕');
     final summary = _worldState.inlineSummary;
     if (summary.isNotEmpty) {
       parts.add(summary);
@@ -767,11 +845,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.history_rounded),
-              title: const Text('回滚到某一幕'),
+              title: Text(
+                _session.lines.length > 1
+                    ? '世界线（${_session.lines.length} 条）'
+                    : '世界线',
+              ),
+              subtitle: Text(
+                _session.lines.length > 1
+                    ? '当前：${_session.line.name} · 可切换 / 分岔'
+                    : '走错了可以从某一幕分岔出新世界线',
+              ),
               enabled: !_busy && _history.isNotEmpty,
               onTap: () {
                 Navigator.pop(ctx);
-                _showRollbackPicker();
+                _showWorldLines();
               },
             ),
             ListTile(
@@ -799,50 +886,256 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _showRollbackPicker() {
+  /// 世界线管理：列出全部世界线，可切换 / 重命名 / 删除 / 分岔。
+  void _showWorldLines() {
+    final theme = Theme.of(context);
+    final palette = AppTheme.readingOf(context);
+    final muted = theme.colorScheme.onSurface.withValues(alpha: 0.55);
+
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.72,
           ),
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _history.length,
-            itemBuilder: (_, i) {
-              final node = _history[i];
-              final isLast = i == _history.length - 1;
-              return ListTile(
-                dense: true,
-                title: Text(
-                  '第 ${node.chapterIndex} 幕'
-                  '${node.date.isEmpty ? '' : ' · ${node.date}'}',
-                  style: const TextStyle(fontSize: 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 4),
+                child: Text(
+                  '世界线',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                 ),
-                subtitle: node.playerAction == null
-                    ? null
-                    : Text(
-                        node.playerAction!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                trailing: isLast ? const Text('当前') : null,
-                enabled: !isLast,
-                onTap: !isLast
-                    ? () {
-                        Navigator.pop(ctx);
-                        _rollbackTo(i);
-                      }
-                    : null,
-              );
-            },
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Text(
+                  '每条世界线独立保存进度与选择记录，互不干扰。'
+                  '点一条即可切换过去。',
+                  style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                ),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: <Widget>[
+                    for (final l in _session.lines)
+                      _lineTile(theme, palette, l, ctx),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.call_split_rounded),
+                title: const Text('从某一幕分岔出新世界线'),
+                subtitle: const Text('保留到那一幕，之后重新做选择'),
+                enabled: !_busy && _history.isNotEmpty,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showBranchPicker();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _lineTile(
+    ThemeData theme,
+    ReadingPalette palette,
+    WorldLine l,
+    BuildContext sheetCtx,
+  ) {
+    final active = l.id == _session.line.id;
+    return ListTile(
+      leading: Icon(
+        active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        size: 20,
+        color: active
+            ? palette.accent
+            : theme.colorScheme.onSurface.withValues(alpha: 0.3),
+      ),
+      title: Row(
+        children: <Widget>[
+          Flexible(
+            child: Text(
+              l.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 14.5,
+                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+          if (active) ...<Widget>[
+            const SizedBox(width: 8),
+            Text(
+              '当前',
+              style: TextStyle(fontSize: 11, color: palette.accent),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Text(
+        <String>[
+          '第 ${l.chapterCount} 幕',
+          if (l.isBranch) '从第 ${l.branchedAtChapter} 幕分岔',
+          if (l.latestDate.isNotEmpty) l.latestDate,
+        ].join(' · '),
+        style: const TextStyle(fontSize: 11.5),
+      ),
+      trailing: PopupMenuButton<String>(
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
+        onSelected: (v) {
+          Navigator.pop(sheetCtx);
+          switch (v) {
+            case 'rename':
+              _renameLine(l);
+              break;
+            case 'delete':
+              _deleteLine(l);
+              break;
+            case 'switch':
+              _switchLine(l.id);
+              break;
+          }
+        },
+        itemBuilder: (_) => <PopupMenuEntry<String>>[
+          if (!active)
+            const PopupMenuItem<String>(
+              value: 'switch',
+              child: Text('切换到这条线'),
+            ),
+          const PopupMenuItem<String>(value: 'rename', child: Text('重命名')),
+          if (_session.lines.length > 1)
+            const PopupMenuItem<String>(value: 'delete', child: Text('删除这条线')),
+        ],
+      ),
+      onTap: active
+          ? null
+          : () {
+              Navigator.pop(sheetCtx);
+              _switchLine(l.id);
+            },
+    );
+  }
+
+  /// 分岔点选择：从哪一幕分出去。
+  void _showBranchPicker() {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurface.withValues(alpha: 0.55);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.62,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 4),
+                child: Text(
+                  '从哪一幕分岔？',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Text(
+                  '保留到该幕为止的剧情，之后重新做选择。'
+                  '当前世界线会原样保留，不会丢。',
+                  style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                ),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _history.length,
+                  itemBuilder: (_, i) {
+                    final node = _history[i];
+                    return ListTile(
+                      dense: true,
+                      title: Text(
+                        '第 ${node.chapterIndex} 幕'
+                        '${node.date.isEmpty ? '' : ' · ${node.date}'}',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      subtitle: node.playerAction == null
+                          ? null
+                          : Text(
+                              node.playerAction!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _branchFrom(i);
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 渲染一个正文段落。
+  ///
+  /// ⚠️ 段首缩进用 **WidgetSpan 里的固定宽度盒子**，而不是几个全角空格。
+  ///
+  /// 2026-09-25 排查结论：代码与配置链路都是对的（`indent()` 用的确实是
+  /// U+3000，逐字节验过；设置 → copyWith → toJson → reader 也通），
+  /// 问题出在**文本排版层把行首空白吃掉了** —— 两端对齐时行首空白会被
+  /// 当作 hanging whitespace 处理。
+  ///
+  /// 占位盒子是布局实体，shaper 折叠不了它，所以缩进**必然**生效。
+  Widget _paragraph(
+    String text, {
+    required double fontSize,
+    required Color color,
+    TextAlign align = TextAlign.justify,
+  }) {
+    final indentPx = _config.paragraphIndent * fontSize;
+    return Text.rich(
+      TextSpan(
+        children: <InlineSpan>[
+          if (indentPx > 0)
+            WidgetSpan(
+              child: SizedBox(width: indentPx, height: fontSize),
+              alignment: PlaceholderAlignment.middle,
+            ),
+          TextSpan(text: text),
+        ],
+      ),
+      textAlign: align,
+      style: TextStyle(
+        fontSize: fontSize,
+        height: _config.lineHeight,
+        letterSpacing: 0.4,
+        color: color,
       ),
     );
   }
@@ -966,17 +1259,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             padding: EdgeInsets.only(
               bottom: TextLayout.spacing(_config.paragraphSpacing),
             ),
-            child: Text(
-              // 段首缩进用全角空格（U+3000）—— 中文字体下才等于一个汉字宽
-              '${TextLayout.indent(_config.paragraphIndent)}$para',
-              textAlign: TextAlign.justify,
-              style: TextStyle(
-                fontSize: fontSize,
-                height: _config.lineHeight,
-                letterSpacing: 0.4,
-                color: palette.ink,
-              ),
-            ),
+            child: _paragraph(para, fontSize: fontSize, color: palette.ink),
           ),
         Divider(height: 26, color: palette.rule),
       ],
@@ -1219,16 +1502,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
         ),
         if (preview.isNotEmpty)
-          Text(
-            '${TextLayout.indent(_config.paragraphIndent)}$preview',
-            textAlign: TextAlign.justify,
-            style: TextStyle(
-              fontSize: fontSize,
-              height: _config.lineHeight,
-              letterSpacing: 0.4,
-              color: palette.ink,
-            ),
-          ),
+          _paragraph(preview, fontSize: fontSize, color: palette.ink),
       ],
     );
   }

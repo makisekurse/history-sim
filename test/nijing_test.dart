@@ -408,7 +408,7 @@ facts: 甲; 乙
     });
   });
 
-  group('GameSession · 回滚与 reroll 一致性', () {
+  group('GameSession · 世界线分支与切换', () {
     SaveSlot newSlot() => SaveSlot(
           id: 's1',
           title: '测试局',
@@ -433,6 +433,15 @@ facts: 甲; 乙
       );
     }
 
+    /// 造一个三幕的局。
+    GameSession threeChapters() {
+      final s = GameSession(newSlot());
+      addChapter(s, '一', '时间：第一天\n地点：甲地');
+      addChapter(s, '二', '时间：第二天\n地点：乙地');
+      addChapter(s, '三', '时间：第三天\n地点：丙地');
+      return s;
+    }
+
     test('appendChapter 写入状态快照', () {
       final s = GameSession(newSlot());
       addChapter(s, '一', '时间：第一天\n地点：甲地');
@@ -442,39 +451,217 @@ facts: 甲; 乙
       expect(s.history.last.worldStateAfter?.location, '甲地');
     });
 
-    test('回滚到上一幕后，三者落在同一时间点', () {
+    test('新局默认只有一条主线', () {
       final s = GameSession(newSlot());
-      addChapter(s, '一', '时间：第一天\n地点：甲地');
-      addChapter(s, '二', '时间：第二天\n地点：乙地');
-      s.attachChronicle('编年史-二');
+      expect(s.lines.length, 1);
+      expect(s.line.isBranch, isFalse);
+      expect(s.line.name, '主线');
+    });
 
-      s.rollbackTo(0);
+    // ---------- 分岔（核心） ----------
+
+    test('分岔：新线保留到分岔点，状态等于那一幕的快照', () {
+      final s = threeChapters();
+      final branch = s.branchFrom(0); // 从第 1 幕分岔
+
+      expect(branch.chapterCount, 1);
+      expect(branch.branchedAtChapter, 1);
+      expect(branch.isBranch, isTrue);
+      // 状态必须回到第 1 幕结束时，不能还停在第 3 幕
+      expect(branch.worldState.time, '第一天');
+      expect(branch.worldState.location, '甲地');
+      // 分岔后自动切到新线
+      expect(s.line.id, branch.id);
+      expect(s.chapterCount, 1);
+    });
+
+    test('分岔：原线完全不动（关键回归）', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      s.branchFrom(0);
+
+      final main = s.lines.firstWhere((l) => l.id == mainId);
+      expect(main.chapterCount, 3);
+      expect(main.worldState.time, '第三天');
+      expect(main.history.last.content, '正文-三');
+    });
+
+    test('分岔：从中间幕分', () {
+      final s = threeChapters();
+      final branch = s.branchFrom(1); // 从第 2 幕分岔
+      expect(branch.chapterCount, 2);
+      expect(branch.branchedAtChapter, 2);
+      expect(branch.worldState.time, '第二天');
+    });
+
+    test('两条线互不干扰：一边继续推演，另一边不受影响', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      s.branchFrom(0); // 切到新线（只有 1 幕）
+
+      addChapter(s, '甲', '时间：第九天\n地点：丁地');
+
+      expect(s.chapterCount, 2);
+      expect(s.worldState.time, '第九天');
+
+      final main = s.lines.firstWhere((l) => l.id == mainId);
+      expect(main.chapterCount, 3);
+      expect(main.worldState.time, '第三天');
+    });
+
+    test('两条线的选择记录互相独立', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      s.branchFrom(0);
+      addChapter(s, '甲', '时间：第九天');
+
+      // 新线的可选行动来自新线自己的最后一幕
+      expect(s.choices.first, '选项A-甲');
+
+      s.switchLine(mainId);
+      expect(s.choices.first, '选项A-三');
+    });
+
+    // ---------- 切换 ----------
+
+    test('切换世界线：正文/状态/编年史/选项全部跟着换', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      s.attachChronicle('主线编年史');
+      s.branchFrom(0);
+
+      // 当前在新线
+      expect(s.chapterCount, 1);
+      s.attachChronicle('分支编年史');
+      expect(s.chronicle, '分支编年史');
+
+      // 切回主线
+      s.switchLine(mainId);
+      expect(s.chapterCount, 3);
+      expect(s.chronicle, '主线编年史');
+      expect(s.worldState.time, '第三天');
+      expect(s.choices.first, '选项A-三');
+    });
+
+    test('切换后 worldState 是那条线自己的，不是共享引用', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      s.branchFrom(0);
+      addChapter(s, '甲', '时间：第九天\n关系：李某|投诚');
+
+      s.switchLine(mainId);
+      // 主线不该看到分支里新增的关系
+      expect(s.worldState.relations.containsKey('李某'), isFalse);
+      expect(s.worldState.time, '第三天');
+    });
+
+    // ---------- 在分岔点重生成 ----------
+
+    test('在分岔点重生成：状态退回 baseState 而不是清空（关键回归）', () {
+      final s = threeChapters();
+      s.branchFrom(1); // 新线保留 2 幕，baseState = 第 1 幕结束时
+      expect(s.worldState.time, '第二天');
+
+      s.popLastForReroll(); // 重生成第 2 幕
+      // 必须退到「第 1 幕结束时」，不能变成空 ——
+      // 否则这条线会丢掉分岔时继承来的全部局势
       expect(s.chapterCount, 1);
       expect(s.worldState.time, '第一天');
       expect(s.worldState.location, '甲地');
-      expect(s.choices.first, '选项A-一');
-      // 编年史也必须回到第一幕快照，而不是留在「未来」的版本
-      expect(s.chronicle, '');
     });
 
-    test('回滚到中间幕', () {
-      final s = GameSession(newSlot());
-      addChapter(s, '一', '时间：第一天');
-      addChapter(s, '二', '时间：第二天');
-      addChapter(s, '三', '时间：第三天');
-      s.rollbackTo(1);
-      expect(s.chapterCount, 2);
-      expect(s.worldState.time, '第二天');
+    // ---------- 删除 / 重命名 ----------
+
+    test('删除世界线', () {
+      final s = threeChapters();
+      final mainId = s.line.id;
+      final branch = s.branchFrom(0);
+      expect(s.lines.length, 2);
+
+      expect(s.deleteLine(branch.id), isTrue);
+      expect(s.lines.length, 1);
+      // 删掉当前线后自动切到剩下那条
+      expect(s.line.id, mainId);
+      expect(s.chapterCount, 3);
     });
 
-    test('reroll 不继承上一次留下的状态（关键回归）', () {
+    test('最后一条世界线删不掉', () {
+      final s = threeChapters();
+      expect(s.deleteLine(s.line.id), isFalse);
+      expect(s.lines.length, 1);
+    });
+
+    test('重命名世界线', () {
+      final s = threeChapters();
+      final branch = s.branchFrom(0);
+      s.renameLine(branch.id, '走西南路线');
+      expect(s.line.name, '走西南路线');
+      // 空白名不生效
+      s.renameLine(branch.id, '   ');
+      expect(s.line.name, '走西南路线');
+    });
+
+    test('分岔名不重复', () {
+      final s = threeChapters();
+      s.branchFrom(0);
+      final n1 = s.line.name;
+      s.branchFrom(0);
+      expect(s.line.name, isNot(n1));
+    });
+
+    // ---------- 快照自愈 ----------
+
+    test('旧存档缺快照：从第一幕分岔也能拿到正确的空状态', () {
+      // 模拟「世界书自带开篇」：第一幕是 UI 层直接造的，没有快照
+      final slot = newSlot();
+      slot.activeLine.history = <ChapterNode>[
+        ChapterNode(
+          chapterIndex: 1,
+          title: '第一幕',
+          content: '开场',
+          choices: <String>['a', 'b'],
+        ),
+      ];
+      final s = GameSession(slot); // 构造时自愈
+      expect(s.history.first.worldStateAfter, isNotNull);
+
+      final branch = s.branchFrom(0);
+      expect(branch.worldState.isEmpty, isTrue);
+      expect(branch.chronicle, '');
+    });
+
+    test('自愈后每一幕都有快照', () {
+      final slot = newSlot();
+      slot.activeLine.history = <ChapterNode>[
+        ChapterNode(
+          chapterIndex: 1,
+          title: '一',
+          content: '正文',
+          choices: <String>['a', 'b'],
+        ),
+        ChapterNode(
+          chapterIndex: 2,
+          title: '二',
+          content: '正文',
+          choices: <String>['c', 'd'],
+        ),
+      ];
+      GameSession(slot);
+      for (final n in slot.activeLine.history) {
+        expect(n.worldStateAfter, isNotNull);
+        expect(n.chronicleAfter, isNotNull);
+      }
+    });
+
+    // ---------- reroll / 编年史 / 开局 ----------
+
+    test('reroll 不继承上一次留下的状态', () {
       final s = GameSession(newSlot());
       addChapter(s, '一', '时间：第一天');
       addChapter(s, '二', '时间：第二天\n关系：张某|已死');
       expect(s.worldState.relations['张某'], '已死');
 
       s.popLastForReroll();
-      // 必须回到第一幕结束时，不能还留着「张某已死」
       expect(s.worldState.time, '第一天');
       expect(s.worldState.relations.containsKey('张某'), isFalse);
       expect(s.chapterCount, 1);
@@ -500,45 +687,7 @@ facts: 甲; 乙
       expect(s.history.first.chronicleAfter, '');
     });
 
-    test('旧存档没有快照字段时回滚不炸', () {
-      final slot = newSlot();
-      slot.history = <ChapterNode>[
-        ChapterNode(
-          chapterIndex: 1,
-          title: '一',
-          content: '正文',
-          choices: <String>['a', 'b'],
-        ),
-        ChapterNode(
-          chapterIndex: 2,
-          title: '二',
-          content: '正文',
-          choices: <String>['c', 'd'],
-        ),
-      ];
-      final s = GameSession(slot);
-      s.rollbackTo(0);
-      expect(s.chapterCount, 1);
-      expect(s.worldState.isEmpty, isTrue);
-    });
-
-    test('备份判断：起点不同才值得备份', () {
-      final s = GameSession(newSlot());
-      addChapter(s, '一', '时间：第一天');
-      expect(s.shouldBackupOver(null), isTrue);
-      expect(s.shouldBackupOver(1), isFalse); // 同一幕数，不重复覆盖
-      expect(s.shouldBackupOver(2), isTrue);
-    });
-
-    test('buildBackup 是深拷贝', () {
-      final s = GameSession(newSlot());
-      addChapter(s, '一', '时间：第一天');
-      final b = s.buildBackup(backupId: 'bk');
-      addChapter(s, '二', '时间：第二天');
-      expect(b.history.length, 1);
-    });
-
-    test('seedOpening 直接落第一幕', () {
+    test('seedOpening 直接落第一幕且带快照', () {
       final s = GameSession(newSlot());
       s.seedOpening(
         content: '开场',
@@ -548,6 +697,7 @@ facts: 甲; 乙
       expect(s.chapterCount, 1);
       expect(s.choices, <String>['x', 'y']);
       expect(s.history.first.worldStateAfter, isNotNull);
+      expect(s.history.first.chronicleAfter, '');
     });
 
     test('toSlot 把状态写回存档', () {
@@ -556,6 +706,98 @@ facts: 甲; 乙
       final slot = s.toSlot();
       expect(slot.history.length, 1);
       expect(slot.worldState.time, '第一天');
+    });
+  });
+
+  group('存档槽 · 世界线序列化与旧档迁移', () {
+    SaveSlot base() => SaveSlot(
+          id: 's1',
+          title: '测试局',
+          worldBook: WorldBook(id: 'b1', name: '测试世界'),
+        );
+
+    test('新档默认带一条主线', () {
+      final slot = base();
+      expect(slot.lines.length, 1);
+      expect(slot.activeLineId, slot.lines.first.id);
+    });
+
+    test('多条世界线往返 JSON 不丢', () {
+      final slot = base();
+      final s = GameSession(slot);
+      s.appendChapter(
+        content: '正文',
+        playerAction: '行动',
+        date: '第一天',
+        choices: <String>['a', 'b'],
+        glossary: const <GlossaryEntry>[],
+        cast: const <CastEntry>[],
+        rawOutput: '',
+        stateRaw: '时间：第一天',
+      );
+      s.branchFrom(0);
+
+      final restored = SaveSlot.fromJson(slot.toJson());
+      expect(restored.lines.length, 2);
+      expect(restored.activeLineId, slot.activeLineId);
+      expect(restored.activeLine.isBranch, isTrue);
+      expect(restored.activeLine.parentLineId, slot.lines.first.id);
+    });
+
+    test('activeLineId 指向不存在的线时自动兜到第一条', () {
+      final slot = SaveSlot(
+        id: 's1',
+        title: 't',
+        worldBook: WorldBook(id: 'b', name: 'w'),
+        activeLineId: '不存在',
+      );
+      expect(slot.activeLineId, slot.lines.first.id);
+    });
+
+    test('旧存档（v1）迁移：顶层三件套包成主线', () {
+      // v1 存档长这样：history / chronicle / worldState 全在顶层，没有 lines
+      final legacy = <String, dynamic>{
+        'id': 'old1',
+        'title': '旧档',
+        'worldBook': WorldBook(id: 'b1', name: '旧世界').toJson(),
+        'history': <Map<String, dynamic>>[
+          ChapterNode(
+            chapterIndex: 1,
+            title: '第一幕',
+            content: '旧正文',
+            choices: <String>['x'],
+          ).toJson(),
+        ],
+        'chronicle': '旧编年史',
+        'worldState': WorldState(time: '旧时间').toJson(),
+        'createdAt': DateTime(2026, 1, 1).toIso8601String(),
+        'updatedAt': DateTime(2026, 1, 2).toIso8601String(),
+      };
+
+      final slot = SaveSlot.fromJson(legacy);
+      expect(slot.lines.length, 1);
+      expect(slot.activeLine.name, '主线');
+      expect(slot.chapterCount, 1);
+      expect(slot.history.first.content, '旧正文');
+      expect(slot.chronicle, '旧编年史');
+      expect(slot.worldState.time, '旧时间');
+    });
+
+    test('摘要行会带上世界线数量', () {
+      final slot = base();
+      GameSession(slot).appendChapter(
+        content: '正文',
+        playerAction: '行动',
+        date: '',
+        choices: <String>['a', 'b'],
+        glossary: const <GlossaryEntry>[],
+        cast: const <CastEntry>[],
+        rawOutput: '',
+        stateRaw: '',
+      );
+      expect(slot.summaryLine.contains('世界线'), isFalse);
+      GameSession(slot).branchFrom(0);
+      expect(slot.summaryLine.contains('2 条世界线'), isTrue);
     });
   });
 

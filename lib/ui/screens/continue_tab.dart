@@ -118,7 +118,11 @@ class ContinueTab extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '第 ${slot.chapterCount} 幕',
+              <String>[
+                '第 ${slot.chapterCount} 幕',
+                // 有多条世界线时，把当前所在的那条也标出来
+                if (slot.lines.length > 1) slot.activeLine.name,
+              ].join(' · '),
               style: TextStyle(
                 fontSize: 13,
                 color: theme.colorScheme.primary,

@@ -5,10 +5,9 @@ import '../../core/app_info.dart';
 import '../../data/prefs_store.dart';
 import '../../data/world_book_repository.dart';
 import '../../models/app_config.dart';
-import '../../models/chapter_node.dart';
 import '../../models/save_slot.dart';
 import '../../models/world_book.dart';
-import '../../models/world_state.dart';
+import '../../services/game_session.dart';
 import '../../services/save_service.dart';
 import 'about_screen.dart';
 import 'continue_tab.dart';
@@ -100,6 +99,10 @@ class _HomeShellState extends State<HomeShell> {
         for (final s in _slots) s.worldBook.id: s.chapterCount,
       };
 
+  /// 全部推演加起来有多少条世界线。
+  int get _lineCount =>
+      _slots.fold(0, (sum, s) => sum + s.lines.length);
+
   Future<void> _startSessionWith(WorldBook book) async {
     final existing = _slotForBook(book.id);
     if (existing != null) {
@@ -117,17 +120,15 @@ class _HomeShellState extends State<HomeShell> {
       worldBook: book,
     );
 
-    // 世界书自带开篇就直接落第一幕，省一次模型调用，也让作者掌控开场。
+    // ⚠️ 走 GameSession.seedOpening，**不要在这里直接造 ChapterNode** ——
+    // 那样会漏掉每幕快照（chronicleAfter / worldStateAfter），
+    // 导致从第一幕分岔时状态退不回去。
     if (book.openingScene.trim().isNotEmpty) {
-      slot.history = <ChapterNode>[
-        ChapterNode(
-          chapterIndex: 1,
-          title: '第一幕',
-          content: book.openingScene.trim(),
-          date: book.era.trim(),
-          choices: book.openingChoices,
-        ),
-      ];
+      GameSession(slot).seedOpening(
+        content: book.openingScene.trim(),
+        date: book.era.trim(),
+        choices: book.openingChoices,
+      );
     }
 
     await SaveService.upsert(slot);
@@ -151,30 +152,33 @@ class _HomeShellState extends State<HomeShell> {
     if (confirm) {
       final ok = await _confirm(
         '重新开始《${book.name}》？\n'
-        '当前进度（第 ${existing.chapterCount} 幕）会被清空，无法恢复。',
+        '当前进度（第 ${existing.chapterCount} 幕）'
+        '${existing.lines.length > 1 ? '与全部 ${existing.lines.length} 条世界线' : ''}'
+        '会被清空，无法恢复。',
       );
       if (!ok) return;
     }
 
-    existing.history = <ChapterNode>[];
-    existing.chronicle = '';
-    existing.worldState = WorldState();
+    // 重开 = 整槽重置成一条全新的主线。
+    // ⚠️ 不复用旧 slot 对象：那样会连旧的世界线一起留着。
+    final fresh = SaveSlot(
+      id: existing.id,
+      title: existing.title,
+      worldBook: existing.worldBook,
+      createdAt: existing.createdAt,
+    );
     if (book.openingScene.trim().isNotEmpty) {
-      existing.history = <ChapterNode>[
-        ChapterNode(
-          chapterIndex: 1,
-          title: '第一幕',
-          content: book.openingScene.trim(),
-          date: book.era.trim(),
-          choices: book.openingChoices,
-        ),
-      ];
+      GameSession(fresh).seedOpening(
+        content: book.openingScene.trim(),
+        date: book.era.trim(),
+        choices: book.openingChoices,
+      );
     }
-    await SaveService.upsert(existing);
-    await _setActiveSlot(existing.id);
+    await SaveService.upsert(fresh);
+    await _setActiveSlot(fresh.id);
     await _reload();
     if (!mounted) return;
-    await _openReader(existing);
+    await _openReader(fresh);
   }
 
   Future<void> _newSession() async {
@@ -589,7 +593,8 @@ class _HomeShellState extends State<HomeShell> {
                   // 数量分开列 —— 回滚备份不是「推演」，
                   // 混在一起会让用户以为凭空多出了几局。
                   Text(
-                    '世界书 ${_books.length} 本 · 推演 ${_slots.length} 个',
+                    '世界书 ${_books.length} 本 · 推演 ${_slots.length} 个'
+                    '${_lineCount > _slots.length ? ' · 世界线 $_lineCount 条' : ''}',
                     style: TextStyle(
                       fontSize: 13,
                       color: theme.colorScheme.onSurface,
