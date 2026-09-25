@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'settings_screen.dart';
+
 /// 「我的」标签页 —— App 设置。
+///
+/// 三个设置入口**各自打开独立分区**，不再都跳同一个混杂长页。
 class ProfileTab extends StatelessWidget {
-  final VoidCallback onOpenSettings;
+  final ValueChanged<SettingsSection> onOpenSection;
   final VoidCallback onOpenAbout;
   final VoidCallback onDataManage;
   final String versionLabel;
@@ -11,7 +15,7 @@ class ProfileTab extends StatelessWidget {
 
   const ProfileTab({
     super.key,
-    required this.onOpenSettings,
+    required this.onOpenSection,
     required this.onOpenAbout,
     required this.onDataManage,
     required this.versionLabel,
@@ -40,21 +44,21 @@ class ProfileTab extends StatelessWidget {
           icon: Icons.hub_outlined,
           title: '模型设置',
           subtitle: '服务商 / API Key / 模型代码 / 测试连接',
-          onTap: onOpenSettings,
+          onTap: () => onOpenSection(SettingsSection.model),
         ),
         _tile(
           theme,
           icon: Icons.auto_stories_outlined,
           title: '阅读设置',
-          subtitle: '主题 / 字号 / 行距 / 竖排 / 顶栏自动隐藏',
-          onTap: onOpenSettings,
+          subtitle: '主题 / 字号 / 行距 / 首行缩进 / 顶栏',
+          onTap: () => onOpenSection(SettingsSection.reading),
         ),
         _tile(
           theme,
           icon: Icons.tune_rounded,
           title: '推演参数',
           subtitle: '发散程度 / 单幕目标字数',
-          onTap: onOpenSettings,
+          onTap: () => onOpenSection(SettingsSection.advanced),
         ),
         const Divider(height: 32),
         _tile(

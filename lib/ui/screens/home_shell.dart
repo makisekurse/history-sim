@@ -45,6 +45,8 @@ class _HomeShellState extends State<HomeShell> {
 
   List<SaveSlot> _slots = <SaveSlot>[];
   List<WorldBook> _books = <WorldBook>[];
+  /// 回滚前自动生成的备份。**不计入推演数量**。
+  List<SaveSlot> _backups = <SaveSlot>[];
   String? _activeSlotId;
   bool _loading = true;
 
@@ -57,11 +59,13 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _reload() async {
     final slots = await SaveService.loadAll();
     final books = await WorldBookRepository.loadAll();
+    final backups = await SaveService.loadBackups();
     final active = await PrefsStore.getString(_kActiveSlot);
     if (!mounted) return;
     setState(() {
       _slots = slots;
       _books = books;
+      _backups = backups;
       _activeSlotId = active;
       _loading = false;
     });
@@ -399,6 +403,8 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _dataManage() async {
     final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -408,17 +414,36 @@ class _HomeShellState extends State<HomeShell> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '世界书与存档只保存在本机，不会上传。',
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.6,
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '本机数据',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 10),
+                  // 数量分开列 —— 回滚备份不是「推演」，
+                  // 混在一起会让用户以为凭空多出了几局。
+                  Text(
+                    '世界书 ${_books.length} 本 · 推演 ${_slots.length} 个',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _backups.isEmpty
+                        ? '世界书与存档只保存在本机，不会上传。'
+                        : '另有 ${_backups.length} 份回滚备份（回滚前自动生成，不计入推演）。',
+                    style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                  ),
+                ],
               ),
             ),
             ListTile(
@@ -435,13 +460,47 @@ class _HomeShellState extends State<HomeShell> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.ios_share_rounded),
+              title: const Text('导出全部推演存档到剪贴板'),
+              enabled: _slots.isNotEmpty,
+              onTap: () async {
+                Navigator.pop(ctx);
+                final all = _slots
+                    .map((s) => SaveService.exportSlot(s))
+                    .join('\n\n=====\n\n');
+                await Clipboard.setData(ClipboardData(text: all));
+                if (mounted) _toast('已复制 ${_slots.length} 个推演存档');
+              },
+            ),
+            if (_backups.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.cleaning_services_outlined),
+                title: const Text('清理回滚备份'),
+                subtitle: Text('删除 ${_backups.length} 份自动备份，不影响推演进度'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final ok = await _confirm(
+                    '删除 ${_backups.length} 份回滚备份？'
+                    '推演进度不受影响，但之后无法再回到回滚前的分支。',
+                  );
+                  if (!ok) return;
+                  final remaining =
+                      (await SaveService.loadAll(includeBackups: true))
+                          .where((s) => !s.isBackup)
+                          .toList();
+                  await SaveService.saveAll(remaining);
+                  await _reload();
+                  if (mounted) _toast('已清理回滚备份');
+                },
+              ),
+            ListTile(
               leading: const Icon(Icons.delete_sweep_outlined),
               title: const Text('清空全部数据'),
-              subtitle: const Text('世界书、存档、API Key 全部删除，不可恢复'),
+              subtitle: const Text('世界书、存档、备份、API Key 全部删除，不可恢复'),
               onTap: () async {
                 Navigator.pop(ctx);
                 final ok = await _confirm(
-                  '确定清空全部数据？世界书、存档与 API Key 都会被删除，无法恢复。',
+                  '确定清空全部数据？世界书、存档、备份与 API Key 都会被删除，无法恢复。',
                 );
                 if (!ok) return;
                 await SaveService.saveAll(<SaveSlot>[]);
@@ -510,11 +569,12 @@ class _HomeShellState extends State<HomeShell> {
                     onNewSession: _newSession,
                   ),
                   ProfileTab(
-                    onOpenSettings: () => Navigator.of(context).push(
+                    onOpenSection: (section) => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => SettingsScreen(
                           config: widget.config,
                           onConfigChanged: widget.onConfigChanged,
+                          section: section,
                         ),
                       ),
                     ),

@@ -12,7 +12,26 @@ class SaveService {
 
   static const String _key = 'nijing_saves_v1';
 
-  static Future<List<SaveSlot>> loadAll() async {
+  /// 读取存档。
+  ///
+  /// ⚠️ 默认**不返回自动备份**（`backup_*`）—— 它们不是用户真实在玩的推演，
+  /// 混进列表会让「我一共玩了两幕，怎么有三个推演」这种困惑出现。
+  /// 需要备份时显式传 `includeBackups: true`。
+  static Future<List<SaveSlot>> loadAll({bool includeBackups = false}) async {
+    final slots = await _loadAllRaw();
+    if (!includeBackups) slots.removeWhere((s) => s.isBackup);
+    return slots;
+  }
+
+  /// 只取自动备份。
+  static Future<List<SaveSlot>> loadBackups() async {
+    final slots = await _loadAllRaw();
+    return slots.where((s) => s.isBackup).toList();
+  }
+
+  /// 底层读取：**包含全部**槽位。写入路径必须用它，
+  /// 否则 `saveAll` 会把备份从盘上抹掉。
+  static Future<List<SaveSlot>> _loadAllRaw() async {
     final raw = await PrefsStore.getString(_key);
     if (raw == null || raw.isEmpty) return <SaveSlot>[];
     try {
@@ -38,7 +57,8 @@ class SaveService {
 
   static Future<void> upsert(SaveSlot slot) async {
     slot.updatedAt = DateTime.now();
-    final all = await loadAll();
+    // ⚠️ 必须用 _loadAllRaw：用 loadAll 的话会把其它备份挤掉
+    final all = await _loadAllRaw();
     final idx = all.indexWhere((e) => e.id == slot.id);
     if (idx >= 0) {
       all[idx] = slot;
@@ -49,13 +69,13 @@ class SaveService {
   }
 
   static Future<void> delete(String id) async {
-    final all = await loadAll();
+    final all = await _loadAllRaw();
     all.removeWhere((e) => e.id == id);
     await saveAll(all);
   }
 
   static Future<SaveSlot?> findById(String id) async {
-    final all = await loadAll();
+    final all = await _loadAllRaw();
     for (final s in all) {
       if (s.id == id) return s;
     }

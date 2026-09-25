@@ -43,6 +43,18 @@ class SaveSlot {
   static String newId() =>
       DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
+  /// 回滚前自动备份的槽位用这个前缀。
+  ///
+  /// ⚠️ 2026-09-25 修：备份以前和正常存档混在一个列表里，用户回滚一次
+  /// 就凭空多出一个「推演」，数据管理里显示的数量也对不上。
+  /// 现在用 id 前缀把两者区分开，备份**不进正常列表**。
+  static const String backupIdPrefix = 'backup_';
+
+  static String backupIdFor(String slotId) => '$backupIdPrefix$slotId';
+
+  /// 这是不是一份自动备份（而非用户真实在玩的推演）。
+  bool get isBackup => id.startsWith(backupIdPrefix);
+
   int get chapterCount => history.length;
 
   /// 最近一次落定的日期，用于列表页展示。

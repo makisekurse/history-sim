@@ -27,14 +27,17 @@ class AppConfig {
 
   double lineHeight;
 
-  /// 竖排阅读
-  bool verticalText;
+  /// 正文首行缩进两格（中文排版习惯）
+  bool indentFirstLine;
+
+  /// 打开推演时自动跳到最新一幕。
+  ///
+  /// 「继续进入」的语义就是**接着上次的进度往下**，
+  /// 所以默认开 —— 否则从首页点进来会停在第一幕，得手动往下翻。
+  bool autoScrollToLatest;
 
   /// 顶栏自动隐藏（零 HUD）
   bool autoHideHeader;
-
-  /// 打字机逐字输出
-  bool typewriter;
 
   AppConfig({
     this.apiProvider = 'bailian',
@@ -45,9 +48,9 @@ class AppConfig {
     this.themeMode = 'mirage',
     this.fontSize = 'md',
     this.lineHeight = 1.9,
-    this.verticalText = false,
+    this.indentFirstLine = true,
+    this.autoScrollToLatest = true,
     this.autoHideHeader = true,
-    this.typewriter = true,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -59,9 +62,9 @@ class AppConfig {
         'themeMode': themeMode,
         'fontSize': fontSize,
         'lineHeight': lineHeight,
-        'verticalText': verticalText,
+        'indentFirstLine': indentFirstLine,
+        'autoScrollToLatest': autoScrollToLatest,
         'autoHideHeader': autoHideHeader,
-        'typewriter': typewriter,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -73,9 +76,9 @@ class AppConfig {
         themeMode: (json['themeMode'] ?? 'mirage').toString(),
         fontSize: (json['fontSize'] ?? 'md').toString(),
         lineHeight: (json['lineHeight'] as num?)?.toDouble() ?? 1.9,
-        verticalText: json['verticalText'] == true,
+        indentFirstLine: json['indentFirstLine'] != false,
+        autoScrollToLatest: json['autoScrollToLatest'] != false,
         autoHideHeader: json['autoHideHeader'] != false,
-        typewriter: json['typewriter'] != false,
       );
 
   AppConfig copyWith({
@@ -87,9 +90,9 @@ class AppConfig {
     String? themeMode,
     String? fontSize,
     double? lineHeight,
-    bool? verticalText,
+    bool? indentFirstLine,
+    bool? autoScrollToLatest,
     bool? autoHideHeader,
-    bool? typewriter,
   }) =>
       AppConfig(
         apiProvider: apiProvider ?? this.apiProvider,
@@ -100,9 +103,9 @@ class AppConfig {
         themeMode: themeMode ?? this.themeMode,
         fontSize: fontSize ?? this.fontSize,
         lineHeight: lineHeight ?? this.lineHeight,
-        verticalText: verticalText ?? this.verticalText,
+        indentFirstLine: indentFirstLine ?? this.indentFirstLine,
+        autoScrollToLatest: autoScrollToLatest ?? this.autoScrollToLatest,
         autoHideHeader: autoHideHeader ?? this.autoHideHeader,
-        typewriter: typewriter ?? this.typewriter,
       );
 
   String encode() => jsonEncode(toJson());

@@ -63,8 +63,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _busy = false;
   String _pendingAction = '';
   String _live = '';
-  String _typerBuffer = '';
-  Timer? _typer;
   String _notice = '';
   bool _degraded = false;
 
@@ -81,11 +79,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _enterImmersive();
     _scheduleHeaderHide();
     _loadApiKey();
+    _maybeJumpToLatest();
   }
 
   @override
   void dispose() {
-    _typer?.cancel();
     _headerTimer?.cancel();
     _client.cancel();
     _scroll.dispose();
@@ -129,18 +127,33 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _scheduleHeaderHide();
   }
 
+  /// 打开推演时跳到最新一幕。
+  ///
+  /// 「继续进入」的语义就是**接着上次的进度往下** —— 默认停在第一幕的话，
+  /// 用户得手动翻到底，等于每次进来都要重新找位置。
+  void _maybeJumpToLatest() {
+    if (!_config.autoScrollToLatest) return;
+    if (_history.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scroll.hasClients) return;
+      _atBottom = true;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
   // ---------- 原始指针：区分「单击」与「划选」 ----------
   //
-  // 2026-09-25 实机事故：旧实现把 GestureDetector 放在 SelectionArea **外面**，
-  // 而 SelectionArea 会吃掉点击手势 —— 顶栏能不能唤出全看点在什么位置，
-  // 用户描述为「调出基本靠随机」。
+  // 2026-09-25 二次修。上一版把 GestureDetector 换成 Listener 之后**仍然唤不出**，
+  // 原因是又加了两个额外守卫：「当前有选中文字」与「落点在底部操作区」。
+  // 只要其中任何一个判断卡住（比如选过一次文字后 onSelectionChanged 没回调
+  // null），顶栏就彻底唤不出来了。
   //
-  // 改用 Listener 监听原始指针事件：它在手势竞技场之前触发，一定收得到。
-  // 再用「有没有拖动」「有没有选中文字」把单击与选择文本区分开。
+  // 现在**只保留一个判断：指针有没有拖动**。
+  // 拖动 = 滚动或划选，其余一律当作单击。
+  // 宁可偶尔多弹一次，也不能让用户唤不出顶栏。
 
   Offset? _pointerDown;
   bool _pointerMoved = false;
-  bool _hasSelection = false;
 
   void _onPointerDown(PointerDownEvent e) {
     _pointerDown = e.position;
@@ -150,25 +163,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _onPointerMove(PointerMoveEvent e) {
     final d = _pointerDown;
     if (d == null || _pointerMoved) return;
-    if ((e.position - d).distance > 10) _pointerMoved = true;
+    if ((e.position - d).distance > 12) _pointerMoved = true;
   }
 
   void _onPointerUp(PointerUpEvent e) {
     final wasDrag = _pointerMoved;
     _pointerDown = null;
     _pointerMoved = false;
-
-    if (wasDrag) return; // 翻页或划选
-    if (_hasSelection) return; // 正在选中文本，单击多半是想取消选择
-
-    // 底部是行动区（选项胶囊 + 输入框），点它们不该顺带唤出顶栏
-    final h = MediaQuery.of(context).size.height;
-    if (h - e.position.dy < 150) return;
-
-    if (_busy) {
-      _skipTyping();
-      return;
-    }
+    if (wasDrag) return;
     _showHeader();
   }
 
@@ -198,40 +200,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
   }
 
-  // ---------- 打字机 ----------
+  // ---------- 流式文本 ----------
+  //
+  // 2026-09-25 移除了打字机效果：它只是把已经到手的文字延迟显示，
+  // 除了让人等之外没有实际价值，还额外引入一个 16ms 定时器与「跳过」状态。
+  // 现在模型吐多少就显示多少。
 
   void _feed(String chunk) {
-    if (!_config.typewriter) {
-      setState(() => _live += chunk);
-      _follow();
-      return;
-    }
-    _typerBuffer += chunk;
-    _typer ??= Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (_typerBuffer.isEmpty) {
-        _typer?.cancel();
-        _typer = null;
-        return;
-      }
-      const step = 3;
-      final take =
-          _typerBuffer.length >= step ? step : _typerBuffer.length;
-      setState(() {
-        _live += _typerBuffer.substring(0, take);
-        _typerBuffer = _typerBuffer.substring(take);
-      });
-      _follow();
-    });
-  }
-
-  void _skipTyping() {
-    if (_typerBuffer.isEmpty) return;
-    _typer?.cancel();
-    _typer = null;
-    setState(() {
-      _live += _typerBuffer;
-      _typerBuffer = '';
-    });
+    setState(() => _live += chunk);
     _follow();
   }
 
@@ -243,7 +219,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _busy = true;
       _pendingAction = action;
       _live = '';
-      _typerBuffer = '';
       _session.clearChoices();
       _notice = '';
       _degraded = false;
@@ -282,8 +257,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
           break;
       }
     }
-
-    _skipTyping();
 
     final p = parsed;
     if (p != null) {
@@ -390,7 +363,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// **单槽覆盖**：每个存档只保留一个备份槽，连续回滚不会堆出一堆重复存档。
   /// 起点与上次相同（幕数一样）时不重复覆盖，避免把更早的分支冲掉。
   Future<void> _backupBeforeRollback() async {
-    final backupId = 'backup_${_slot.id}';
+    final backupId = SaveSlot.backupIdFor(_slot.id);
     final existing = await SaveService.findById(backupId);
     if (!_session.shouldBackupOver(existing?.history.length)) return;
     await SaveService.upsert(
@@ -434,8 +407,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         // ⚠️ 选择胶囊与输入框必须留在 SelectionArea **外面**，
                         // 否则选中手势会和按钮点击打架。
                         SelectionArea(
-                          onSelectionChanged: (value) =>
-                              _hasSelection = value != null,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
@@ -970,14 +941,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
-              para.trim(),
-              textAlign: _config.verticalText
-                  ? TextAlign.start
-                  : TextAlign.justify,
+              // 中文排版惯例：段首缩进两格（用两个全角空格，不是 4 个半角）
+              _config.indentFirstLine ? '　　${para.trim()}' : para.trim(),
+              textAlign: TextAlign.justify,
               style: TextStyle(
                 fontSize: fontSize,
                 height: _config.lineHeight,
-                letterSpacing: _config.verticalText ? 1.6 : 0.4,
+                letterSpacing: 0.4,
                 color: palette.ink,
               ),
             ),
@@ -1212,7 +1182,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
               const SizedBox(width: 8),
               Text(
-                _degraded ? '本地降级中…' : '推演中…（轻触可跳过打字）',
+                _degraded ? '本地降级中…' : '推演中…',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -1224,7 +1194,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
         if (preview.isNotEmpty)
           Text(
-            preview,
+            _config.indentFirstLine ? '　　$preview' : preview,
             textAlign: TextAlign.justify,
             style: TextStyle(
               fontSize: fontSize,

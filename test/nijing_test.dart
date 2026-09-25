@@ -558,6 +558,41 @@ facts: 甲; 乙
     });
   });
 
+  group('存档槽 · 回滚备份识别', () {
+    // 2026-09-25 实机问题：回滚自动生成的备份混在正常列表里，
+    // 用户只玩到第二幕却看到三个「推演」。
+
+    test('备份 id 带前缀，能被识别', () {
+      final id = SaveSlot.backupIdFor('abc123');
+      expect(id, 'backup_abc123');
+      final slot = SaveSlot(
+        id: id,
+        title: '【回滚备份】某局',
+        worldBook: WorldBook(id: 'b', name: '世界'),
+      );
+      expect(slot.isBackup, isTrue);
+    });
+
+    test('普通存档不算备份', () {
+      final slot = SaveSlot(
+        id: 'abc123',
+        title: '某局',
+        worldBook: WorldBook(id: 'b', name: '世界'),
+      );
+      expect(slot.isBackup, isFalse);
+    });
+
+    test('备份标记能穿过 JSON 往返', () {
+      final slot = SaveSlot(
+        id: SaveSlot.backupIdFor('xyz'),
+        title: '备份',
+        worldBook: WorldBook(id: 'b', name: '世界'),
+      );
+      final restored = SaveSlot.fromJson(slot.toJson());
+      expect(restored.isBackup, isTrue);
+    });
+  });
+
   group('ResponseParser · 模板占位文字过滤', () {
     // 2026-09-25 实机事故：内核提示词给了可直接照抄的内容行，模型把它们
     // 原样抄进了输出。用户截图里选项混着「第一条可供主角决断的具体行动
