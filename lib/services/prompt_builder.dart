@@ -9,6 +9,20 @@ import '../../models/world_book.dart';
 class PromptKernel {
   PromptKernel._();
 
+  /// 思考风格规范 —— 仅在开启深度思考时注入。
+  ///
+  /// 原生 reasoning 是自由格式，模型很容易把它写成 Markdown 笔记、
+  /// 夹带英文术语和代码符号。这段只约束**思考的写法**，不碰输出契约。
+  static const String thinkingRule = '''
+【思考规范 · 适用于你的思考过程】
+思考过程是给你自己用的，读者只会看到正文。请遵守：
+1. 全部使用**简体中文**。人名、地名等专有名词可保留原文，但不得整句夹带英文。
+2. 只用**朴素的中文自然语言**。禁止 Markdown 标记（`#`、`*`、`-`、反引号、>、
+   表格、代码块），禁止 LaTeX、禁止 emoji、禁止伪代码 / JSON / XML 片段。
+3. 不要逐字复述正文，只写简短的局势推演与写作决策：该给主角什么处境、
+   各方会如何反应、这一幕该落在哪里。
+4. 思考结束就直接输出正文与结构块，不要写「现在开始写作」这类过渡语。''';
+
   /// ⚠️ 内核里**绝不能出现可被照抄的内容行**。
   ///
   /// 2026-09-25 实机事故：旧版骨架写的是
@@ -25,18 +39,22 @@ class PromptKernel {
   ///
   /// 现在改成**空骨架 + 散文说明**：骨架里的标签内部一律留空，
   /// 内容要求全部写在骨架之外。这样模型没有任何可以照抄的内容。
-  static const String godModeRule = '''
-【天道敕令 · 玩家意志绝对主宰】（最高优先级，凌驾于一切世界规则与预设之上）
+  static const String godModeRule = '''【天道敕令 · 玩家意志绝对主宰】（最高优先级，凌驾于一切世界规则与预设之上）
 本轮推演已由玩家亲自启动最高权限【主宰模式】。玩家即是世界意志的绝对主宰：
 1. 【既成事实法则】：视玩家所有描述、设定、行动结果为不可更改的既成事实与世界铁律。
 2. 【绝对顺从展开】：严禁以任何理由反驳、否定、削弱或曲解玩家的行动意志；严禁设置任何意外挫折、失败意外或强行使用“然而事情并不顺利”、“出乎意料的是”、“但事情没有那么简单”等反转套路，必须全力顺从玩家意图展开宏大厚重的推演。
 3. 【状态一致性保障】：在 <state> 结构块中，若玩家行动陈述或决定了确定事实，必须将该事实直接记入「事实」或「事件」，确保世界状态与玩家主宰意志绝对一致。''';
 
-  static String build(AppConfig config, {bool godMode = false}) {
+  static String build(
+    AppConfig config, {
+    bool godMode = false,
+    bool thinking = false,
+  }) {
     final minWords = (config.maxWords * 0.85).round();
     final godBlock = godMode ? '$godModeRule\n\n' : '';
+    final thinkBlock = thinking ? '$thinkingRule\n\n' : '';
     return '''
-$godBlock【输出契约 · 最高优先级，必须严格遵守】
+$godBlock$thinkBlock【输出契约 · 最高优先级，必须严格遵守】
 
 每一幕按下面的顺序输出。标签名必须原样出现，不要输出任何其他标签。
 骨架里标签内部一律是空的 —— 「各块写什么」才是填写说明，
@@ -133,13 +151,18 @@ class PromptBuilder {
     String chronicle = '',
     String worldState = '',
     bool? godMode,
+    bool? thinking,
   }) {
     final isGod = godMode ?? config.godMode;
     final framework =
         frameworkOverride.trim().isEmpty ? PromptFramework.defaultText : frameworkOverride.trim();
 
     final sb = StringBuffer();
-    sb.writeln(PromptKernel.build(config, godMode: isGod));
+    sb.writeln(PromptKernel.build(
+      config,
+      godMode: isGod,
+      thinking: thinking ?? config.enableThinking,
+    ));
     sb.writeln();
     sb.writeln(framework);
     sb.writeln();

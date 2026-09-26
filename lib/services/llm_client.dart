@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import '../core/app_error.dart';
 import '../models/app_config.dart';
 import 'providers.dart';
+import 'response_parser.dart';
+import 'runtime_log.dart';
 
 /// 统一的流式大模型客户端。
 ///
@@ -99,6 +101,13 @@ class LlmClient {
       body['enable_thinking'] = false;
     }
 
+    RuntimeLog.i(
+      'LLM',
+      '请求 ${body['model']} · thinking=${body['enable_thinking'] ?? '默认'} · '
+      'temperature=${config.temperature} · max_tokens=${body['max_tokens']} · '
+      '消息 ${messages.length} 条 / ${messages.fold<int>(0, (a, m) => a + (m['content']?.length ?? 0))} 字',
+    );
+
     final request = http.Request('POST', Uri.parse(url));
     request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
     request.headers['Content-Type'] = 'application/json';
@@ -145,6 +154,7 @@ class LlmClient {
         .transform(const LineSplitter());
 
     var insideReasoning = false;
+    var rawLines = 0;
 
     try {
       await for (final line in lines) {
@@ -157,6 +167,8 @@ class LlmClient {
 
         final payload = trimmed.substring(5).trim();
         if (payload == '[DONE]') break;
+        rawLines++;
+        RuntimeLog.i('LLM', 'SSE #$rawLines: $payload', detail: true);
 
         String? chunk;
         try {
@@ -178,7 +190,7 @@ class LlmClient {
                       insideReasoning = true;
                       chunkBuf.write('<think>');
                     }
-                    chunkBuf.write(reasoning);
+                    chunkBuf.write(ResponseParser.cleanThoughtForShow(reasoning));
                   }
 
                   if (content is String && content.isNotEmpty) {
@@ -206,6 +218,8 @@ class LlmClient {
         }
       }
 
+      RuntimeLog.i('LLM', '流结束：SSE $rawLines 行 · '
+          '${_yieldedAny ? '有内容' : '无内容'}');
       if (insideReasoning) {
         insideReasoning = false;
         _yieldedAny = true;

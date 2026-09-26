@@ -17,6 +17,7 @@ import 'package:nijing/services/save_service.dart';
 import 'package:nijing/services/story_export_service.dart';
 import 'package:nijing/services/text_layout.dart';
 import 'package:nijing/services/providers.dart';
+import 'package:nijing/services/runtime_log.dart';
 import 'package:nijing/services/wakelock_service.dart';
 import 'package:nijing/services/world_state_service.dart';
 
@@ -195,16 +196,16 @@ void main() {
 
   group('ResponseParser · 流式预览', () {
     test('未闭合标签在预览里也要藏掉', () {
-      final preview =
-          ResponseParser.stripForPreview('正文开始…\n\n<choices>\n第一条');
-      expect(preview.contains('<choices>'), isFalse);
-      expect(preview.contains('正文开始'), isTrue);
+      final (_, body) =
+          ResponseParser.splitLive('正文开始…\n\n<choices>\n第一条');
+      expect(body.contains('<choices>'), isFalse);
+      expect(body.contains('正文开始'), isTrue);
     });
 
     test('正在流入的半截标签不闪出', () {
-      final preview = ResponseParser.stripForPreview('正文开始…\n\n<ca');
-      expect(preview.contains('<ca'), isFalse);
-      expect(preview.contains('正文开始'), isTrue);
+      final (_, body) = ResponseParser.splitLive('正文开始…\n\n<ca');
+      expect(body.contains('<ca'), isFalse);
+      expect(body.contains('正文开始'), isTrue);
     });
 
     test('拒答识别', () {
@@ -1032,15 +1033,16 @@ facts: 甲; 乙
 <think>
 正在推演下一步逻辑，尚未结束…
 ''';
-      final preview = ResponseParser.stripForPreview(raw);
-      expect(preview, '天色微明。');
-      expect(preview, isNot(contains('正在推演')));
+      final (thought, body) = ResponseParser.splitLive(raw);
+      expect(body, '天色微明。');
+      expect(body, isNot(contains('正在推演')));
+      expect(thought, contains('正在推演'));
     });
 
     test('流式中正在流入的半截 think 标签不闪烁', () {
-      expect(ResponseParser.stripForPreview('晨光初照。<th'), '晨光初照。');
-      expect(ResponseParser.stripForPreview('晨光初照。<think'), '晨光初照。');
-      expect(ResponseParser.stripForPreview('晨光初照。</think'), '晨光初照。');
+      expect(ResponseParser.splitLive('晨光初照。<th').$2, '晨光初照。');
+      expect(ResponseParser.splitLive('晨光初照。<think').$2, '晨光初照。');
+      expect(ResponseParser.splitLive('晨光初照。</think').$2, '晨光初照。');
     });
   });
 
@@ -1588,6 +1590,205 @@ facts: 甲; 乙
       expect(Providers.supportsThinkingSwitch('qwen3.8-flash'), isTrue);
       expect(Providers.supportsThinkingSwitch('Qwen3-Max'), isTrue);
       expect(Providers.supportsThinkingSwitch('deepseek-chat'), isFalse);
+    });
+  });
+
+  // ==========================================================================
+  // v1.3.3 五项实机缺陷修复专项
+  // ==========================================================================
+
+  group('v1.3.3 · splitLive 流式思考与正文分流（问题一）', () {
+    test('思考块单独取出，正文不受污染', () {
+      final (thought, body) = ResponseParser.splitLive(
+        '<think>权衡局势，决定让他去接头。</think>\n\n秋风肃杀，他裹紧大衣。',
+      );
+      expect(thought, '权衡局势，决定让他去接头。');
+      expect(body, '秋风肃杀，他裹紧大衣。');
+    });
+
+    test('未闭合的 think：全文归思考，正文为空（思考阶段）', () {
+      final (thought, body) = ResponseParser.splitLive('<think>正在推演下一步');
+      expect(thought, '正在推演下一步');
+      expect(body, isEmpty);
+    });
+
+    test('正文开始后思考仍在块内 —— 两者不互相吞并', () {
+      final (thought, body) = ResponseParser.splitLive(
+        '<think>思考</think>\n正文开头\n<choices>\n1. 甲\n2. 乙\n</choices>',
+      );
+      expect(thought, '思考');
+      expect(body, '正文开头');
+    });
+
+    test('半截标签在正文侧被隐藏', () {
+      final (_, body) = ResponseParser.splitLive('晨光初照。<ch');
+      expect(body, '晨光初照。');
+    });
+  });
+
+  group('v1.3.3 · 未闭合 think 不得吞掉正文（问题三根因）', () {
+    test('缺少 </think> 时，正文与结构块仍能正常解析', () {
+      const raw = '''
+<think>
+我先权衡一下局势，再决定落笔方向。
+<date>1949年11月1日</date>
+
+秋风肃杀，他快步走向茶馆。
+
+<choices>
+1. 推门而入
+2. 在门外观察
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.body, contains('秋风肃杀'));
+      expect(p.body, isNot(contains('权衡')));
+      expect(p.thought, contains('权衡'));
+      expect(p.date, '1949年11月1日');
+      expect(p.choices.length, 2);
+      expect(p.hasUsableChoices, isTrue);
+    });
+
+    test('未闭合 think 位于文末时，不误伤前面的正文', () {
+      const raw = '正文在此之前。\n<think>思考没有收尾';
+      final p = ResponseParser.parse(raw);
+      expect(p.body, '正文在此之前。');
+      expect(p.thought, '思考没有收尾');
+    });
+  });
+
+  group('v1.3.3 · 思考文本规范化（问题四）', () {
+    test('剥掉 Markdown 标记与代码围栏，保留分析文字', () {
+      const raw = '''
+### 局势分析
+- **要点一**：主角需要离开
+```dart
+final x = 1;
+```
+> 引用一行
+表格 | 列
+--- | ---
+''';
+      final cleaned = ResponseParser.cleanThoughtForShow(raw);
+      expect(cleaned, isNot(contains('###')));
+      expect(cleaned, isNot(contains('**')));
+      expect(cleaned, isNot(contains('```')));
+      // 表格分隔行整行删掉，但含竖线的普通文字保留
+      expect(cleaned, isNot(contains('--- | ---')));
+      expect(cleaned, contains('局势分析'));
+      expect(cleaned, contains('要点一'));
+      expect(cleaned, contains('主角需要离开'));
+      expect(cleaned, contains('表格 | 列'));
+    });
+
+    test('幂等：重复规范化结果不变', () {
+      const raw = '## 标题\n- 一条\n**加粗**';
+      final once = ResponseParser.cleanThoughtForShow(raw);
+      final twice = ResponseParser.cleanThoughtForShow(once);
+      expect(twice, once);
+    });
+
+    test('内联反引号与零宽字符被清除', () {
+      final cleaned = ResponseParser.cleanThoughtForShow('看`code`与\u200b零宽');
+      expect(cleaned, '看code与零宽');
+    });
+  });
+
+  group('v1.3.3 · 思考规范提示词（问题四第一道防线）', () {
+    test('开启思考时注入思考规范，关闭时不注入', () {
+      final cfg = AppConfig();
+      final withThink = PromptKernel.build(cfg, thinking: true);
+      final without = PromptKernel.build(cfg, thinking: false);
+      expect(withThink, contains('思考规范'));
+      expect(withThink, contains('简体中文'));
+      expect(without, isNot(contains('思考规范')));
+    });
+
+    test('buildSystemPrompt 默认跟随 config.enableThinking', () {
+      final book = WorldBook.blank();
+      final on = PromptBuilder.buildSystemPrompt(
+        config: AppConfig(enableThinking: true),
+        book: book,
+      );
+      final off = PromptBuilder.buildSystemPrompt(
+        config: AppConfig(enableThinking: false),
+        book: book,
+      );
+      expect(on, contains('思考规范'));
+      expect(off, isNot(contains('思考规范')));
+    });
+  });
+
+  group('v1.3.3 · 运行日志（问题五）', () {
+    tearDown(() {
+      RuntimeLog.enabled = false;
+      RuntimeLog.verbose = false;
+      RuntimeLog.clear();
+    });
+
+    test('关闭时零记录', () {
+      RuntimeLog.enabled = false;
+      RuntimeLog.i('T', '不应记录');
+      expect(RuntimeLog.count, 0);
+    });
+
+    test('开启时记录并可按详细级别过滤', () {
+      RuntimeLog.enabled = true;
+      RuntimeLog.i('T', '普通');
+      RuntimeLog.i('T', '详细', detail: true);
+      expect(RuntimeLog.count, 1);
+
+      RuntimeLog.verbose = true;
+      RuntimeLog.i('T', '详细', detail: true);
+      expect(RuntimeLog.count, 2);
+    });
+
+    test('环形缓冲不超过上限', () {
+      RuntimeLog.enabled = true;
+      for (var i = 0; i < RuntimeLog.maxEntries + 50; i++) {
+        RuntimeLog.i('T', 'line $i');
+      }
+      expect(RuntimeLog.count, RuntimeLog.maxEntries);
+      // 最旧的被丢掉，最新的还在
+      expect(RuntimeLog.dump(), contains('line ${RuntimeLog.maxEntries + 49}'));
+    });
+
+    test('导出文本包含环境表头且不含 API Key 形态', () {
+      RuntimeLog.enabled = true;
+      RuntimeLog.i('LLM', '请求 qwen3.8-flash');
+      final dump = RuntimeLog.dump();
+      expect(dump, contains('拟境 · 运行日志'));
+      expect(dump, contains('qwen3.8-flash'));
+      expect(dump, isNot(contains('sk-')));
+    });
+
+    test('超长条目被截断', () {
+      RuntimeLog.enabled = true;
+      RuntimeLog.i('T', 'x' * 5000);
+      expect(RuntimeLog.entries().first.message.length,
+          lessThanOrEqualTo(RuntimeLog.maxMessageChars + 20));
+    });
+  });
+
+  group('v1.3.3 · 日志与详细开关配置持久化', () {
+    test('默认关闭，序列化往返保留', () {
+      final cfg = AppConfig();
+      expect(cfg.logEnabled, isFalse);
+      expect(cfg.verboseLog, isFalse);
+
+      final on = cfg.copyWith(logEnabled: true, verboseLog: true);
+      final restored = AppConfig.fromJson(on.toJson());
+      expect(restored.logEnabled, isTrue);
+      expect(restored.verboseLog, isTrue);
+    });
+
+    test('旧配置缺字段时回落为关闭', () {
+      final restored = AppConfig.fromJson(<String, dynamic>{
+        'apiProvider': 'bailian',
+        'enableThinking': true,
+      });
+      expect(restored.logEnabled, isFalse);
+      expect(restored.verboseLog, isFalse);
     });
   });
 }

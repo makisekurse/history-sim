@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../../data/prefs_store.dart';
 import '../../data/secure_store.dart';
 import '../../models/app_config.dart';
+import '../../services/file_export_service.dart';
 import '../../services/llm_client.dart';
 import '../../services/providers.dart';
+import '../../services/runtime_log.dart';
 import '../../services/text_layout.dart';
 import '../themes/app_theme.dart';
 
@@ -16,7 +18,7 @@ import '../themes/app_theme.dart';
 ///
 /// 现在每个入口只渲染自己那一段，标题也跟着变。
 /// [all] 是给阅读页菜单里的「设置」用的（那里需要一页看全）。
-enum SettingsSection { model, advanced, reading, all }
+enum SettingsSection { model, advanced, reading, debug, all }
 
 /// 设置页。
 ///
@@ -151,6 +153,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return '推演参数';
       case SettingsSection.reading:
         return '阅读设置';
+      case SettingsSection.debug:
+        return '调试与日志';
       case SettingsSection.all:
         return '设置';
     }
@@ -168,9 +172,138 @@ class _SettingsScreenState extends State<SettingsScreen> {
           if (_shows(SettingsSection.model)) ..._modelSection(theme),
           if (_shows(SettingsSection.advanced)) ..._advancedSection(theme),
           if (_shows(SettingsSection.reading)) ..._readingSection(theme),
+          if (_shows(SettingsSection.debug)) ..._debugSection(theme),
         ],
       ),
     );
+  }
+
+  // ---------- 分区四：调试与日志 ----------
+
+  List<Widget> _debugSection(ThemeData theme) => <Widget>[
+        _section(theme, '调试与日志'),
+        const SizedBox(height: 12),
+        _switchRow(
+          theme,
+          '记录运行日志',
+          '把请求参数、流式分块、解析判定与错误详情记到内存，供排查生成异常。'
+              '不记录 API Key。默认关闭。',
+          _config.logEnabled,
+          (v) => _apply(
+            _config.copyWith(
+              logEnabled: v,
+              // 关掉总开关时顺带关掉详细模式，避免留下一个无效的「开」
+              verboseLog: v ? _config.verboseLog : false,
+            ),
+            immediate: true,
+          ),
+        ),
+        _switchRow(
+          theme,
+          '详细日志（含模型原文）',
+          '额外记录每一条 SSE 原始行与模型输出片段。数据量大，只在复现疑难问题时开。',
+          _config.verboseLog,
+          (v) => _apply(
+            _config.copyWith(verboseLog: v, logEnabled: v || _config.logEnabled),
+            immediate: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ValueListenableBuilder<int>(
+          valueListenable: RuntimeLog.revision,
+          builder: (context, _, child) => Text(
+            RuntimeLog.enabled
+                ? '当前已记录 ${RuntimeLog.count} 条'
+                    '${RuntimeLog.verbose ? '（详细模式）' : ''}'
+                : '日志未开启',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: RuntimeLog.enabled && RuntimeLog.count > 0
+                    ? _exportLog
+                    : null,
+                icon: const Icon(Icons.save_alt_rounded, size: 18),
+                label: const Text('导出日志'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  side: BorderSide(color: theme.dividerColor),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              onPressed: RuntimeLog.count > 0 ? _clearLog : null,
+              icon: const Icon(Icons.delete_outline_rounded, size: 18),
+              label: const Text('清空'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                side: BorderSide(color: theme.dividerColor),
+              ),
+            ),
+          ],
+        ),
+      ];
+
+  Future<void> _exportLog() async {
+    final text = RuntimeLog.dump();
+    final ts = FileExportService.formatTimestamp();
+    final res = await FileExportService.exportFile(
+      fileName: '拟境_运行日志_$ts.txt',
+      content: text,
+      mimeType: 'text/plain',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          res.success
+              ? '运行日志（${RuntimeLog.count} 条）已保存至：${res.path}'
+              : '导出失败：${res.message}',
+        ),
+        action: SnackBarAction(
+          label: '系统分享',
+          onPressed: () => FileExportService.shareText(
+            title: '拟境 · 运行日志',
+            text: text,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _clearLog() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Text(
+          '清空当前 ${RuntimeLog.count} 条运行日志？',
+          style: const TextStyle(fontSize: 14, height: 1.6),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    RuntimeLog.clear();
+    if (!mounted) return;
+    setState(() {});
   }
 
   // ---------- 分区一：模型 ----------

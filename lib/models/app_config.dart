@@ -54,6 +54,12 @@ class AppConfig {
   /// 模型深度思考模式（Thinking / Reasoning 模式）
   bool enableThinking;
 
+  /// 运行日志（排障用）。默认关闭 —— 不开就是零开销。
+  bool logEnabled;
+
+  /// 详细日志：额外记录 SSE 原始行与模型原文片段，量很大。
+  bool verboseLog;
+
   AppConfig({
     this.apiProvider = 'bailian',
     this.baseUrl = '',
@@ -70,6 +76,8 @@ class AppConfig {
     this.keepScreenOn = true,
     this.godMode = false,
     this.enableThinking = true,
+    this.logEnabled = false,
+    this.verboseLog = false,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -88,6 +96,8 @@ class AppConfig {
         'keepScreenOn': keepScreenOn,
         'godMode': godMode,
         'enableThinking': enableThinking,
+        'logEnabled': logEnabled,
+        'verboseLog': verboseLog,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -108,6 +118,8 @@ class AppConfig {
         keepScreenOn: json['keepScreenOn'] != false,
         godMode: json['godMode'] == true,
         enableThinking: json['enableThinking'] != false,
+        logEnabled: json['logEnabled'] == true,
+        verboseLog: json['verboseLog'] == true,
       );
 
   AppConfig copyWith({
@@ -126,6 +138,8 @@ class AppConfig {
     bool? keepScreenOn,
     bool? godMode,
     bool? enableThinking,
+    bool? logEnabled,
+    bool? verboseLog,
   }) =>
       AppConfig(
         apiProvider: apiProvider ?? this.apiProvider,
@@ -143,6 +157,8 @@ class AppConfig {
         keepScreenOn: keepScreenOn ?? this.keepScreenOn,
         godMode: godMode ?? this.godMode,
         enableThinking: enableThinking ?? this.enableThinking,
+        logEnabled: logEnabled ?? this.logEnabled,
+        verboseLog: verboseLog ?? this.verboseLog,
       );
 
   String encode() => jsonEncode(toJson());

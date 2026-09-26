@@ -5,8 +5,9 @@ import '../models/world_book.dart';
 import 'llm_client.dart';
 import 'prompt_builder.dart';
 import 'response_parser.dart';
+import 'runtime_log.dart';
 
-enum GenEventKind { delta, notice, done, failed }
+enum GenEventKind { delta, notice, restart, done, failed }
 
 class GenEvent {
   final GenEventKind kind;
@@ -26,6 +27,14 @@ class GenEvent {
 
   const GenEvent.notice(this.text)
       : kind = GenEventKind.notice,
+        chapter = null,
+        degraded = false;
+
+  /// 上一轮作废，即将从零开始新一轮 —— UI 收到后必须**清空已显示的残文**，
+  /// 否则不合格的旧内容会和新内容叠在一起。
+  const GenEvent.restart()
+      : kind = GenEventKind.restart,
+        text = '',
         chapter = null,
         degraded = false;
 
@@ -85,8 +94,12 @@ class FallbackService {
       }
 
       if (attempt > 0) {
+        // 先让 UI 丢掉落选的那一轮残文，再报「正在重试」——
+        // 顺序不能反，否则旧残文会和新内容叠在一起。
+        yield const GenEvent.restart();
         yield GenEvent.notice('输出未满足契约，正在改写重试（第 $attempt 次）…');
       }
+      RuntimeLog.i('Fallback', '尝试 ${attempt + 1}/${_maxNudge + 1}');
 
       final nudge = PromptBuilder.retryNudge(attempt);
       final messages = PromptBuilder.buildMessages(
@@ -122,7 +135,10 @@ class FallbackService {
           return;
         }
         lastError = e;
+        RuntimeLog.w('Fallback', '第 ${attempt + 1} 轮抛出：'
+            '${e.kind.name} · ${e.message}${e.detail == null ? '' : ' · ${e.detail}'}');
         if (e.retryable && attempt < _maxNudge) {
+          if (buffer.isNotEmpty) yield const GenEvent.restart();
           yield GenEvent.notice('${e.message} 正在重试…');
           continue;
         }
@@ -130,6 +146,7 @@ class FallbackService {
       }
 
       if (abortedEarly) {
+        RuntimeLog.w('Fallback', '第 ${attempt + 1} 轮早停（疑似拒答）');
         lastError = const AppError(
           AppErrorKind.refused,
           '模型回避了这一段的推演。',
@@ -139,6 +156,14 @@ class FallbackService {
 
       final raw = buffer.toString();
       final parsed = ResponseParser.parse(raw);
+
+      RuntimeLog.i('Fallback', '第 ${attempt + 1} 轮结束：原文 ${raw.length} 字 · '
+          '正文 ${parsed.body.length} 字 · 思考 ${parsed.thought.length} 字 · '
+          '分支 ${parsed.choices.length} 条'
+          '${parsed.hasUsableChoices ? '' : '（分支不足）'}');
+      if (!parsed.hasUsableChoices) {
+        RuntimeLog.w('Fallback', '缺 <choices>，原文尾部：${_tail(raw)}', detail: true);
+      }
 
       if (parsed.body.trim().isEmpty) {
         lastError = const AppError(AppErrorKind.refused, '模型返回了空内容。');
@@ -159,12 +184,14 @@ class FallbackService {
     // ---- 二级兜底：提示切换通道 ----
     final err = lastError ??
         const AppError(AppErrorKind.unknown, '生成失败，原因未知。');
+    RuntimeLog.e('Fallback', '三级兜底触发：${err.kind.name} · ${err.message}');
     yield GenEvent.notice(
       '${err.message}\n可尝试：在设置里换一个模型或换一家服务商'
       '（不同厂商的内容尺度不同），或点「重新生成本幕」。',
     );
 
     // ---- 三级兜底：本地降级，保证不断流 ----
+    yield const GenEvent.restart();
     yield GenEvent.done(
       ParsedChapter(
         body: _localDegradedBody(playerAction, book),
@@ -187,4 +214,8 @@ class FallbackService {
         '这一决定已记入编年史，本幕的推演正文尚未生成。'
         '待网络或接口恢复后，点击下方「重新生成本幕」即可补齐。';
   }
+
+  /// 排障用：取原文尾部，直接定位截断点。
+  static String _tail(String s, [int n = 200]) =>
+      s.length <= n ? s : '…${s.substring(s.length - n)}';
 }

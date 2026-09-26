@@ -17,6 +17,7 @@ import '../../services/game_session.dart';
 import '../../services/llm_client.dart';
 import '../../services/response_parser.dart';
 import '../../services/save_service.dart';
+import '../../services/runtime_log.dart';
 import '../../services/story_export_service.dart';
 import '../../services/text_layout.dart';
 import '../../services/wakelock_service.dart';
@@ -26,6 +27,7 @@ import '../widgets/chapter_toc_sheet.dart';
 import '../widgets/choice_pill.dart';
 import '../widgets/free_input_bar.dart';
 import '../widgets/glossary_sheet.dart';
+import '../widgets/live_thought_view.dart';
 import '../widgets/thought_sheet.dart';
 import '../widgets/world_line_tree.dart';
 import 'cast_screen.dart';
@@ -73,6 +75,11 @@ class _ReaderScreenState extends State<ReaderScreen>
   String _pendingAction = '';
   String _live = '';
   String _notice = '';
+
+  /// 提示是否「粘住」：终态提示（降级 / 中止）留到下次操作，
+  /// 过程提示（正在重试…）在章节落定时必须清掉 —— 否则选项都出来了，
+  /// 「输出未满足契约，正在改写重试」还挂在那儿。
+  bool _noticeSticky = false;
   bool _degraded = false;
 
   bool _headerVisible = true;
@@ -303,6 +310,14 @@ class _ReaderScreenState extends State<ReaderScreen>
     _follow();
   }
 
+  /// 丢掉当前这一轮的流式结果，从零重来。
+  ///
+  /// 重试 / 降级 / 中止都会走到这里 —— 不清空的话，上一轮不合格的残文
+  /// 会和新一轮内容叠在一起（实机反复出现过的症状）。
+  void _resetLive() {
+    _live = '';
+  }
+
   // ---------- 生成 ----------
 
   Future<void> _act(String action, {bool? godMode}) async {
@@ -311,9 +326,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     setState(() {
       _busy = true;
       _pendingAction = action;
-      _live = '';
+      _resetLive();
       _session.clearChoices();
       _notice = '';
+      _noticeSticky = false;
       _degraded = false;
     });
     _atBottom = true;
@@ -334,23 +350,32 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
 
     await for (final ev in stream) {
-      if (!mounted) return;
-      switch (ev.kind) {
-        case GenEventKind.delta:
-          _feed(ev.text);
-          break;
-        case GenEventKind.notice:
-          setState(() => _notice = ev.text);
-          break;
-        case GenEventKind.done:
-          parsed = ev.chapter;
-          degraded = ev.degraded;
-          break;
-        case GenEventKind.failed:
-          setState(() => _notice = ev.text);
-          break;
+        if (!mounted) return;
+        switch (ev.kind) {
+          case GenEventKind.delta:
+            _feed(ev.text);
+            break;
+          case GenEventKind.notice:
+            setState(() {
+              _notice = ev.text;
+              _noticeSticky = false;
+            });
+            break;
+          case GenEventKind.restart:
+            setState(_resetLive);
+            break;
+          case GenEventKind.done:
+            parsed = ev.chapter;
+            degraded = ev.degraded;
+            break;
+          case GenEventKind.failed:
+            setState(() {
+              _notice = ev.text;
+              _noticeSticky = true;
+            });
+            break;
+        }
       }
-    }
 
     final p = parsed;
     if (p != null) {
@@ -368,17 +393,20 @@ class _ReaderScreenState extends State<ReaderScreen>
           thought: p.thought,
           godMode: isGod,
         );
-        _live = '';
+        _resetLive();
         _pendingAction = '';
         _busy = false;
         _degraded = degraded;
+        // 章节落定 = 过程提示全部作废。只有降级这种终态才留一句话。
+        _notice = degraded ? '本幕未能取得模型响应，已进入本地降级，可重新生成本幕。' : '';
+        _noticeSticky = degraded;
       });
       await _persist();
       await _maybeCompressChronicle();
     } else {
       setState(() {
         _busy = false;
-        _live = '';
+        _resetLive();
         _pendingAction = '';
       });
     }
@@ -424,9 +452,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     setState(() {
       // 弹出最后一幕，并把 chronicle / worldState 恢复到这一幕**之前**
       _session.popLastForReroll();
-      _live = '';
+      _resetLive();
       _pendingAction = '';
       _notice = '';
+      _noticeSticky = false;
     });
     await _act(action);
   }
@@ -447,10 +476,11 @@ class _ReaderScreenState extends State<ReaderScreen>
 
     final branch = _session.branchFrom(index);
     setState(() {
-      _live = '';
+      _resetLive();
       _pendingAction = '';
       _notice = '已从第 $chapterNo 幕分岔出「${branch.name}」。'
           '原世界线已保留，可在「世界线」里随时切回。';
+      _noticeSticky = false;
     });
     await _persist();
     _jumpToLatest();
@@ -461,9 +491,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (_busy) return;
     setState(() {
       _session.switchLine(lineId);
-      _live = '';
+      _resetLive();
       _pendingAction = '';
       _notice = '';
+      _noticeSticky = false;
     });
     await _persist();
     _jumpToLatest();
@@ -499,6 +530,10 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Future<void> _deleteLine(WorldLine target) async {
+    if (_busy) {
+      _toast('推演进行中，暂不能管理世界线。');
+      return;
+    }
     if (_session.lines.length <= 1) {
       _toast('至少要保留一条世界线。');
       return;
@@ -525,7 +560,7 @@ class _ReaderScreenState extends State<ReaderScreen>
     if (ok != true || !mounted) return;
     setState(() {
       _session.deleteLine(target.id);
-      _live = '';
+      _resetLive();
       _pendingAction = '';
     });
     await _persist();
@@ -542,7 +577,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     _client.cancel();
     setState(() {
       _busy = false;
+      _resetLive();
+      _pendingAction = '';
       _notice = '已中止本次推演。';
+      _noticeSticky = true;
     });
   }
 
@@ -588,7 +626,8 @@ class _ReaderScreenState extends State<ReaderScreen>
                                   anchorKey: _chapterKeyFor(i),
                                 ),
                               if (_busy) _liveView(theme, fontSize),
-                              if (_notice.isNotEmpty) _noticeView(theme),
+                              if (_notice.isNotEmpty && (!_busy || _noticeSticky))
+                                _noticeView(theme),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -1606,6 +1645,20 @@ class _ReaderScreenState extends State<ReaderScreen>
                     _showRawOutput(chapter);
                   },
                 ),
+                ListTile(
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: const Text('导出运行日志'),
+                  subtitle: Text(
+                    RuntimeLog.enabled
+                        ? '本次会话已记录 ${RuntimeLog.count} 条，用于排查生成异常'
+                        : '日志未开启 —— 请先在「我的 → 调试与日志」里打开',
+                  ),
+                  enabled: RuntimeLog.enabled && RuntimeLog.count > 0,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _exportRuntimeLog();
+                  },
+                ),
                 const SizedBox(height: 12),
               ],
             ),
@@ -1759,6 +1812,38 @@ class _ReaderScreenState extends State<ReaderScreen>
     );
   }
 
+  /// 排障用：把本次会话的运行日志导出成物理文件。
+  Future<void> _exportRuntimeLog() async {
+    final text = RuntimeLog.dump();
+    final ts = FileExportService.formatTimestamp();
+    final res = await FileExportService.exportFile(
+      fileName: '拟境_运行日志_$ts.txt',
+      content: text,
+      mimeType: 'text/plain',
+    );
+    if (res.success) {
+      RuntimeLog.i('App', '运行日志已导出：${res.path}');
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          res.success
+              ? '运行日志（${RuntimeLog.count} 条）已保存至：${res.path}'
+              : '导出失败：${res.message}',
+        ),
+        action: SnackBarAction(
+          label: '系统分享',
+          onPressed: () => FileExportService.shareText(
+            title: '拟境 · 运行日志',
+            text: text,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _actionCard(ThemeData theme, String act) {
     final palette = AppTheme.readingOf(context);
     return Container(
@@ -1799,13 +1884,13 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   Widget _liveView(ThemeData theme, double fontSize) {
     final palette = AppTheme.readingOf(context);
-    final preview = ResponseParser.stripForPreview(_live);
-    final openThink = RegExp(r'[<＜《]\s*(think|thought)\b', caseSensitive: false).allMatches(_live).length;
-    final closeThink = RegExp(r'[<＜《]\s*/\s*(think|thought)\b', caseSensitive: false).allMatches(_live).length;
-    final isThinking = openThink > closeThink;
+    // 思考块不丢弃 —— 拆出来单独显示。旧版直接 stripForPreview 全剥掉，
+    // 于是整个思考阶段只能显示一句「推演思考中…」，用户什么都看不到。
+    final (thought, preview) = ResponseParser.splitLive(_live);
+    final showThought = preview.isEmpty && thought.isNotEmpty;
     final statusText = _degraded
         ? '本地降级中…'
-        : (preview.isEmpty && isThinking ? '推演思考中…' : '推演中…');
+        : (showThought ? '推演思考中…' : '推演中…');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1836,6 +1921,7 @@ class _ReaderScreenState extends State<ReaderScreen>
             ],
           ),
         ),
+        if (showThought) LiveThoughtView(thought: thought),
         if (preview.isNotEmpty)
           _paragraph(preview, fontSize: fontSize, color: palette.ink),
       ],

@@ -1,4 +1,5 @@
 import '../models/annotation.dart';
+import 'runtime_log.dart';
 
 /// 一幕输出的结构化解析结果。
 class ParsedChapter {
@@ -92,7 +93,9 @@ class ResponseParser {
       return const ParsedChapter(body: '', rawOutput: '');
     }
 
-    final blocks = _scanBlocks(raw);
+    // ⚠️ 模型常常忘记写 `</think>`。若不处理，未闭合块会一路吃到文末，
+    // 正文整个被当成思考、正文变空 → 判定「模型返回了空内容」→ 反复重试。
+    final blocks = _scanBlocks(raw, terminateOpenThink: true);
 
     final choices = <String>[];
     final glossary = <GlossaryEntry>[];
@@ -128,7 +131,7 @@ class ResponseParser {
           break;
         case 'think':
         case 'thought':
-          final t = b.inner.trim();
+          final t = _cleanThought(b.inner);
           if (t.isNotEmpty) {
             thought = thought.isEmpty ? t : '$thought\n\n$t';
           }
@@ -148,25 +151,61 @@ class ResponseParser {
     );
   }
 
-  /// 流式预览用：把结构块藏起来，避免用户看到半截标签。
+  /// 流式预览用：把「思考」与「正文」分开取。
   ///
-  /// 与 [parse] 的区别：还没闭合的块也一并藏掉（吃到当前文本末尾），
-  /// 并且额外处理**正在流入的半截标签**（`<`、`<ch`、`</cho`），
-  /// 否则打字过程中会闪出 `<cho` 这种东西。
-  static String stripForPreview(String raw) {
-    if (raw.isEmpty) return '';
-    var s = _rebuildBody(raw, _scanBlocks(raw)).trimRight();
+  /// 深度思考模式下,用户要在思考阶段就看到模型在想什么,所以思考块
+  /// **不丢弃**,而是单独返回。
+  ///
+  /// 返回 `(thought, body)`。未闭合的 `<think>` 视为「仍在思考」,
+  /// 其内容全部归入 thought；半截标签（`<th`、`</think`）按其方向处理。
+  static (String thought, String body) splitLive(String raw) {
+    if (raw.isEmpty) return ('', '');
+    final blocks = _scanBlocks(raw, terminateOpenThink: true);
+    final thought = StringBuffer();
+    final body = StringBuffer();
+    var cursor = 0;
 
-    // 尾部可能是还没收完的标签前缀，一并藏掉
-    final partial = RegExp(r'[<＜《][a-zA-Z/]{0,12}$').firstMatch(s);
-    if (partial != null) {
-      s = s.substring(0, partial.start).trimRight();
+    for (final b in blocks) {
+      if (b.start > cursor) body.write(raw.substring(cursor, b.start));
+      cursor = b.end;
+      if (b.tag == 'think' || b.tag == 'thought') {
+        final t = b.inner.trim();
+        if (t.isNotEmpty) {
+          if (thought.isNotEmpty) thought.write('\n\n');
+          thought.write(t);
+        }
+      }
     }
+    if (cursor < raw.length) body.write(raw.substring(cursor));
+
+    return (
+      thought.toString().trim(),
+      _finishBody(body.toString()),
+    );
+  }
+
+  /// [splitLive] 用的正文收尾：
+  /// 逐行去模板占位、清前缀，并藏掉尾部正在流入的半截标签。
+  static String _finishBody(String text) {
+    final cleaned = text
+        .split('\n')
+        .where((l) => !isBodyNoise(l))
+        .join('\n')
+        .trim();
+    var s = cleanBodyPrefix(cleaned);
+    final partial = RegExp(r'[<＜《][a-zA-Z/]{0,12}$').firstMatch(s);
+    if (partial != null) s = s.substring(0, partial.start).trimRight();
     return s;
   }
 
   /// 扫描出所有结构块的位置与内容。
-  static List<_Block> _scanBlocks(String raw) {
+  ///
+  /// [terminateOpenThink] 为 true 时，未闭合的 think 块会被截断到下一个结构
+  /// 标签之前 —— 见 [parse]。
+  static List<_Block> _scanBlocks(
+    String raw, {
+    bool terminateOpenThink = false,
+  }) {
     final blocks = <_Block>[];
     var cursor = 0;
 
@@ -185,6 +224,15 @@ class ResponseParser {
       if (close != null) {
         end = close.end;
         contentEnd = close.start;
+      } else if (terminateOpenThink && (tag == 'think' || tag == 'thought')) {
+        // ⚠️ 模型常常忘记写 `</think>`。不管的话它一路吃到文末，
+        // 正文整个被当成思考 → 正文为空 → 判定「空内容」→ 反复重试。
+        // 把**紧跟其后的第一个结构标签**当作思考的终点。
+        final next = _openTag.firstMatch(raw.substring(contentStart));
+        if (next != null) {
+          end = contentStart + next.start;
+          contentEnd = end;
+        }
       }
 
       blocks.add(_Block(
@@ -195,6 +243,8 @@ class ResponseParser {
       ));
       cursor = end;
     }
+    RuntimeLog.i('Parser', '扫到 ${blocks.length} 个结构块：'
+        '${blocks.map((b) => b.tag).join(',')}');
     return blocks;
   }
 
@@ -374,6 +424,59 @@ class ResponseParser {
         '',
       )
       .trim();
+
+  // ---------- 思考文本规范化 ----------
+  //
+  // 原生 reasoning 是自由格式：Markdown 标题、加粗、代码围栏、行内反引号、
+  // 列表标记、零宽字符全都会出现。提示词里已经要求「纯中文自然语言」，
+  // 这里是**第二道防线** —— 提示词不保证 100% 生效。
+  //
+  // 刻意**不做机翻**：把英文自动翻译成中文只会引入错误，不如原文保留。
+
+  static final RegExp _mdFence = RegExp(r'^\s*```.*$', multiLine: true);
+  static final RegExp _mdHeading = RegExp(r'^\s{0,3}#{1,6}\s*', multiLine: true);
+  static final RegExp _mdQuote = RegExp(r'^\s{0,3}>\s?', multiLine: true);
+  static final RegExp _mdBullet = RegExp(r'^\s{0,3}[-*+•]\s+', multiLine: true);
+
+  /// 规范化思考文本，供 LLM 流式转换与 [parse] 共用。
+  ///
+  /// 幂等：同一段文本跑两次结果一致（逐块流式调用也安全）。
+  static String cleanThoughtForShow(String raw) => _cleanThought(raw);
+
+  /// 规范化思考文本。幂等：同一段文本跑两次结果一致。
+  static String _cleanThought(String raw) {
+    if (raw.trim().isEmpty) return '';
+
+    var s = raw
+        .replaceAll('\u200b', '')
+        .replaceAll('\u200c', '')
+        .replaceAll('\ufeff', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+
+    // 代码围栏整行删掉（内容保留 —— 那是模型的分析文字）
+    s = s.replaceAll(_mdFence, '');
+    // 行内反引号
+    s = s.replaceAll('`', '');
+    // 行首标记 → 中文项目符号
+    s = s.replaceAll(_mdBullet, '· ');
+    s = s.replaceAll(_mdQuote, '');
+    s = s.replaceAll(_mdHeading, '');
+    // 加粗 / 斜体标记
+    s = s.replaceAll('**', '').replaceAll('__', '');
+    // 表格分隔行整行删掉（`--- | ---` 这类），别误伤「a | b 分隔符」这种正文字符串
+    s = s.replaceAll(
+      RegExp(r'^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$', multiLine: true),
+      '',
+    );
+
+    final lines = s
+        .split('\n')
+        .map((l) => l.trimRight())
+        .where((l) => l.trim().isNotEmpty)
+        .toList();
+    return lines.join('\n').trim();
+  }
 }
 
 class _Block {

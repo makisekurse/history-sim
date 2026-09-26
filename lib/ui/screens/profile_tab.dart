@@ -60,6 +60,13 @@ class ProfileTab extends StatelessWidget {
           subtitle: '发散程度 / 单幕目标字数',
           onTap: () => onOpenSection(SettingsSection.advanced),
         ),
+        _tile(
+          theme,
+          icon: Icons.bug_report_outlined,
+          title: '调试与日志',
+          subtitle: '运行日志开关 / 导出日志 / 清空',
+          onTap: () => onOpenSection(SettingsSection.debug),
+        ),
         const Divider(height: 32),
         _tile(
           theme,

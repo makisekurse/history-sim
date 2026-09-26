@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'core/app_info.dart';
 import 'data/prefs_store.dart';
 import 'models/app_config.dart';
+import 'services/runtime_log.dart';
 import 'ui/screens/home_shell.dart';
 import 'ui/screens/onboarding_screen.dart';
 import 'ui/screens/settings_screen.dart';
@@ -66,6 +67,12 @@ Future<AppConfig> _loadConfig() async {
   return config;
 }
 
+/// 把配置里的日志开关同步到 [RuntimeLog]。
+void _syncLogFlags(AppConfig c) {
+  RuntimeLog.enabled = c.logEnabled;
+  RuntimeLog.verbose = c.verboseLog;
+}
+
 class HistSimApp extends StatefulWidget {
   final AppConfig initialConfig;
   final bool showOnboarding;
@@ -90,6 +97,8 @@ class _HistSimAppState extends State<HistSimApp> with WidgetsBindingObserver {
     _config = widget.initialConfig;
     _onboarding = widget.showOnboarding;
     WidgetsBinding.instance.addObserver(this);
+    _syncLogFlags(_config);
+    RuntimeLog.i('App', '启动 · ${AppInfo.appName} v${AppInfo.versionLabel}');
   }
 
   @override
@@ -115,6 +124,7 @@ class _HistSimAppState extends State<HistSimApp> with WidgetsBindingObserver {
 
   void _updateConfig(AppConfig c) {
     setState(() => _config = c);
+    _syncLogFlags(c);
   }
 
   Future<void> _finishOnboarding({required bool openSettings}) async {
