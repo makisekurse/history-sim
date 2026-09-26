@@ -192,48 +192,67 @@ class _ReaderScreenState extends State<ReaderScreen>
   /// 精准平滑跳转定位到指定幕。
   void _jumpToChapter(int index) {
     if (index < 0 || index >= _history.length) return;
-    final ctx = _chapterKeyFor(index).currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(
-        ctx,
-        duration: const Duration(milliseconds: 320),
-        curve: Curves.easeInOut,
-        alignment: 0.05,
-      );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctx = _chapterKeyFor(index).currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeInOut,
+          alignment: 0.05,
+        );
+      }
+    });
+  }
+
+  // ---------- 原始指针：区分「单击」、「划动」与「控件交互」 ----------
+  //
+  // 1. 单击：未拖动且未点在操作控件上时切换顶栏显隐。
+  // 2. 划选与滚动：移动超过 12 像素视为滚动/划动，不触发展开或收回。
+  // 3. 控件点击：若落在底部决策分支或操作按钮上，执行对应功能，不误切顶栏。
+  // 4. 多指触摸与取消：基于 pointer id 跟踪主触摸点，防止多指或系统手势打断导致状态错乱。
+
+  int? _activePointer;
+  Offset? _pointerDown;
+  bool _pointerMoved = false;
+  bool _ignoreTapForHeader = false;
+
+  void _onPointerDown(PointerDownEvent e) {
+    if (_activePointer == null) {
+      _activePointer = e.pointer;
+      _pointerDown = e.position;
+      _pointerMoved = false;
+      _ignoreTapForHeader = false;
     }
   }
 
-  // ---------- 原始指针：区分「单击」与「划选」 ----------
-  //
-  // 2026-09-25 二次修。上一版把 GestureDetector 换成 Listener 之后**仍然唤不出**，
-  // 原因是又加了两个额外守卫：「当前有选中文字」与「落点在底部操作区」。
-  // 只要其中任何一个判断卡住（比如选过一次文字后 onSelectionChanged 没回调
-  // null），顶栏就彻底唤不出来了。
-  //
-  // 现在**只保留一个判断：指针有没有拖动**。
-  // 拖动 = 滚动或划选，其余一律当作单击。
-  // 宁可偶尔多弹一次，也不能让用户唤不出顶栏。
-
-  Offset? _pointerDown;
-  bool _pointerMoved = false;
-
-  void _onPointerDown(PointerDownEvent e) {
-    _pointerDown = e.position;
-    _pointerMoved = false;
-  }
-
   void _onPointerMove(PointerMoveEvent e) {
+    if (e.pointer != _activePointer) return;
     final d = _pointerDown;
     if (d == null || _pointerMoved) return;
     if ((e.position - d).distance > 12) _pointerMoved = true;
   }
 
   void _onPointerUp(PointerUpEvent e) {
+    if (e.pointer != _activePointer) return;
     final wasDrag = _pointerMoved;
+    final ignored = _ignoreTapForHeader;
+    _activePointer = null;
     _pointerDown = null;
     _pointerMoved = false;
-    if (wasDrag) return;
+    _ignoreTapForHeader = false;
+    if (wasDrag || ignored) return;
     _toggleHeader();
+  }
+
+  void _onPointerCancel(PointerCancelEvent e) {
+    if (e.pointer == _activePointer) {
+      _activePointer = null;
+      _pointerDown = null;
+      _pointerMoved = false;
+      _ignoreTapForHeader = false;
+    }
   }
 
   // ---------- 滚动跟随 ----------
@@ -533,6 +552,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                     onPointerDown: _onPointerDown,
                     onPointerMove: _onPointerMove,
                     onPointerUp: _onPointerUp,
+                    onPointerCancel: _onPointerCancel,
                     child: SelectionArea(
                       child: ListView(
                         controller: _scroll,
@@ -559,49 +579,53 @@ class _ReaderScreenState extends State<ReaderScreen>
                           ),
                           const SizedBox(height: 16),
                           SelectionContainer.disabled(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                if (!_busy) ...<Widget>[
-                                  if (_history.isEmpty && _choices.isEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 12),
-                                      child: SizedBox(
-                                        width: double.infinity,
-                                        child: FilledButton.icon(
-                                          onPressed: () => _act(''),
-                                          icon: const Icon(Icons.auto_stories_rounded,
-                                              size: 18),
-                                          label: const Text('开始推演'),
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor:
-                                                theme.colorScheme.primary,
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 14),
+                            child: Listener(
+                              behavior: HitTestBehavior.translucent,
+                              onPointerDown: (_) => _ignoreTapForHeader = true,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  if (!_busy) ...<Widget>[
+                                    if (_history.isEmpty && _choices.isEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 12),
+                                        child: SizedBox(
+                                          width: double.infinity,
+                                          child: FilledButton.icon(
+                                            onPressed: () => _act(''),
+                                            icon: const Icon(Icons.auto_stories_rounded,
+                                                size: 18),
+                                            label: const Text('开始推演'),
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor:
+                                                  theme.colorScheme.primary,
+                                              padding: const EdgeInsets.symmetric(
+                                                  vertical: 14),
+                                            ),
                                           ),
                                         ),
                                       ),
+                                    for (var i = 0; i < _choices.length; i++)
+                                      ChoicePill(
+                                        index: i + 1,
+                                        text: _choices[i],
+                                        enabled: !_busy,
+                                        onTap: () => _act(_choices[i]),
+                                      ),
+                                    const SizedBox(height: 6),
+                                    FreeInputBar(
+                                      busy: false,
+                                      onSend: _act,
+                                      onCancel: _cancel,
                                     ),
-                                  for (var i = 0; i < _choices.length; i++)
-                                    ChoicePill(
-                                      index: i + 1,
-                                      text: _choices[i],
-                                      enabled: !_busy,
-                                      onTap: () => _act(_choices[i]),
+                                  ] else
+                                    FreeInputBar(
+                                      busy: true,
+                                      onSend: _act,
+                                      onCancel: _cancel,
                                     ),
-                                  const SizedBox(height: 6),
-                                  FreeInputBar(
-                                    busy: false,
-                                    onSend: _act,
-                                    onCancel: _cancel,
-                                  ),
-                                ] else
-                                  FreeInputBar(
-                                    busy: true,
-                                    onSend: _act,
-                                    onCancel: _cancel,
-                                  ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                           const SizedBox(height: 32),
@@ -626,84 +650,88 @@ class _ReaderScreenState extends State<ReaderScreen>
       duration: const Duration(milliseconds: 240),
       child: IgnorePointer(
         ignoring: !_headerVisible,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
-          decoration: BoxDecoration(
-            color: palette.scrim,
-            border: Border(
-              bottom: BorderSide(color: palette.rule, width: 0.8),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleHeader,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
+            decoration: BoxDecoration(
+              color: palette.scrim,
+              border: Border(
+                bottom: BorderSide(color: palette.rule, width: 0.8),
+              ),
             ),
-          ),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Text(
-                      _slot.worldBook.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: palette.ink,
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        _slot.worldBook.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: palette.ink,
+                        ),
                       ),
-                    ),
-                    Text(
-                      _statusLine(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11.5, color: palette.muted),
-                    ),
-                  ],
-                ),
-              ),
-              // 目录 / 编年史 / 人物志 / 世界观察 / 更多 —— 顶栏就是内容入口
-              _headerAction(
-                palette,
-                icon: Icons.format_list_bulleted_rounded,
-                tooltip: '幕次目录',
-                onTap: () => ChapterTocSheet.show(
-                  context,
-                  history: _history,
-                  onSelectChapter: _jumpToChapter,
-                ),
-              ),
-              _headerAction(
-                palette,
-                icon: Icons.timeline_rounded,
-                tooltip: '编年史',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => ChronicleScreen(history: _history),
+                      Text(
+                        _statusLine(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11.5, color: palette.muted),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              _headerAction(
-                palette,
-                icon: Icons.groups_outlined,
-                tooltip: '人物志',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => CastScreen(history: _history),
+                // 目录 / 编年史 / 人物志 / 世界观察 / 更多 —— 顶栏就是内容入口
+                _headerAction(
+                  palette,
+                  icon: Icons.format_list_bulleted_rounded,
+                  tooltip: '幕次目录',
+                  onTap: () => ChapterTocSheet.show(
+                    context,
+                    history: _history,
+                    onSelectChapter: _jumpToChapter,
                   ),
                 ),
-              ),
-              _headerAction(
-                palette,
-                icon: Icons.explore_outlined,
-                tooltip: '世界观察',
-                onTap: _showWorldState,
-              ),
-              _headerAction(
-                palette,
-                icon: Icons.more_horiz_rounded,
-                tooltip: '更多',
-                onTap: _openMenu,
-              ),
-            ],
+                _headerAction(
+                  palette,
+                  icon: Icons.timeline_rounded,
+                  tooltip: '编年史',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ChronicleScreen(history: _history),
+                    ),
+                  ),
+                ),
+                _headerAction(
+                  palette,
+                  icon: Icons.groups_outlined,
+                  tooltip: '人物志',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CastScreen(history: _history),
+                    ),
+                  ),
+                ),
+                _headerAction(
+                  palette,
+                  icon: Icons.explore_outlined,
+                  tooltip: '世界观察',
+                  onTap: _showWorldState,
+                ),
+                _headerAction(
+                  palette,
+                  icon: Icons.more_horiz_rounded,
+                  tooltip: '更多',
+                  onTap: _openMenu,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1066,8 +1094,14 @@ class _ReaderScreenState extends State<ReaderScreen>
                       Navigator.pop(ctx);
                       _switchLine(l.id);
                     },
-                    onRename: (l) => _renameLine(l),
-                    onDelete: (l) => _deleteLine(l),
+                    onRename: (l) {
+                      Navigator.pop(ctx);
+                      _renameLine(l);
+                    },
+                    onDelete: (l) {
+                      Navigator.pop(ctx);
+                      _deleteLine(l);
+                    },
                   ),
                 ),
               ),
@@ -1337,15 +1371,19 @@ class _ReaderScreenState extends State<ReaderScreen>
   }
 
   Widget _miniAction(ThemeData theme, IconData icon, VoidCallback onTap) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(4),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Icon(
-          icon,
-          size: 16,
-          color: theme.colorScheme.primary.withValues(alpha: 0.75),
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _ignoreTapForHeader = true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Icon(
+            icon,
+            size: 16,
+            color: theme.colorScheme.primary.withValues(alpha: 0.75),
+          ),
         ),
       ),
     );
@@ -1470,6 +1508,10 @@ class _ReaderScreenState extends State<ReaderScreen>
     ctrl.dispose();
 
     if (saved == null || !mounted) return;
+    if (saved.trim().isEmpty) {
+      _toast('正文内容不能为空');
+      return;
+    }
     final index = _history.indexOf(chapter);
     if (index < 0) return;
 
@@ -1612,7 +1654,9 @@ class _ReaderScreenState extends State<ReaderScreen>
   Widget _liveView(ThemeData theme, double fontSize) {
     final palette = AppTheme.readingOf(context);
     final preview = ResponseParser.stripForPreview(_live);
-    final isThinking = _live.contains(RegExp(r'[<＜《]\s*(think|thought)', caseSensitive: false));
+    final openThink = RegExp(r'[<＜《]\s*(think|thought)\b', caseSensitive: false).allMatches(_live).length;
+    final closeThink = RegExp(r'[<＜《]\s*/\s*(think|thought)\b', caseSensitive: false).allMatches(_live).length;
+    final isThinking = openThink > closeThink;
     final statusText = _degraded
         ? '本地降级中…'
         : (preview.isEmpty && isThinking ? '推演思考中…' : '推演中…');

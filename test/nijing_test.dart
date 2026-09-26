@@ -1189,5 +1189,80 @@ facts: 甲; 乙
       await WakelockService.disable();
     });
   });
+
+  group('健壮性与边界回归测试', () {
+    test('ResponseParser · 多个与大写 think 块及未闭合解析', () {
+      final p = ResponseParser.parse('<THINK>第一段思考</THINK>正文在此<thought>第二段思考</thought>');
+      expect(p.thought, '第一段思考\n\n第二段思考');
+      expect(p.body, '正文在此');
+
+      final p2 = ResponseParser.parse('<think>未闭合的思考内容');
+      expect(p2.thought, '未闭合的思考内容');
+      expect(p2.body, isEmpty);
+    });
+
+    test('StoryExportService · 空推演记录安全导出', () {
+      final md = StoryExportService.toMarkdown(
+        book: WorldBook(id: 'wb0', name: '空白书'),
+        line: WorldLine(id: 'l0', name: '主线'),
+        history: <ChapterNode>[],
+      );
+      expect(md, contains('# 空白书'));
+      expect(md, contains('共 0 幕'));
+
+      final txt = StoryExportService.toPlainText(
+        book: WorldBook(id: 'wb0', name: '空白书'),
+        line: WorldLine(id: 'l0', name: '主线'),
+        history: <ChapterNode>[],
+      );
+      expect(txt, contains('《空白书》'));
+      expect(txt, contains('共 0 幕'));
+    });
+
+    test('GameSession · editChapterContent 越界与多世界线独立性', () {
+      final slot = SaveSlot(
+        id: 'slot_bounds',
+        title: '测试',
+        worldBook: WorldBook(id: 'wb1', name: '测试'),
+      );
+      final session = GameSession(slot);
+      session.appendChapter(
+        content: '第一幕正文',
+        playerAction: '行动1',
+        date: '',
+        choices: <String>['A', 'B'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: '',
+        stateRaw: '',
+      );
+      session.appendChapter(
+        content: '第二幕正文',
+        playerAction: '行动2',
+        date: '',
+        choices: <String>['A', 'B'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: '',
+        stateRaw: '',
+      );
+
+      // 越界安全
+      session.editChapterContent(-1, '非法');
+      session.editChapterContent(99, '非法');
+      expect(session.history[0].content, '第一幕正文');
+      expect(session.history[1].content, '第二幕正文');
+
+      // 分岔后就地编辑互不影响
+      final branch = session.branchFrom(0);
+      session.switchLine(branch.id);
+      session.editChapterContent(0, '新分支修改后的正文');
+      expect(session.history[0].content, '新分支修改后的正文');
+
+      // 切换回主线，主线正文未被破坏
+      session.switchLine(slot.lines.first.id);
+      expect(session.history[0].content, '第一幕正文');
+    });
+  });
 }
 

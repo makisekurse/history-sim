@@ -52,6 +52,26 @@ class WorldLineTreeView extends StatelessWidget {
       }
     }
 
+    // 兜底保障：若存在孤立循环引用导致某些节点未挂载到 roots，强制将其作为根节点渲染，防丢失
+    final visited = <String>{};
+    void markVisited(_TreeNode n) {
+      if (visited.add(n.line.id)) {
+        for (final c in n.children) {
+          markVisited(c);
+        }
+      }
+    }
+    for (final r in roots) {
+      markVisited(r);
+    }
+    for (final l in lines) {
+      if (!visited.contains(l.id)) {
+        final fallbackRoot = nodesById[l.id]!;
+        roots.add(fallbackRoot);
+        markVisited(fallbackRoot);
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[

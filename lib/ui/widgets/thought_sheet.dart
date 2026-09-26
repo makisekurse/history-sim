@@ -65,8 +65,9 @@ class ThoughtSheet extends StatelessWidget {
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: thought));
                       if (context.mounted) {
+                        final sm = ScaffoldMessenger.of(context);
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        sm.showSnackBar(
                           const SnackBar(content: Text('思考链内容已复制')),
                         );
                       }
