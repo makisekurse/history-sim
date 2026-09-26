@@ -91,8 +91,11 @@ class LlmClient {
       'temperature': config.temperature,
       'max_tokens': calculateMaxTokens(config.maxWords),
     };
-    // qwen3 系列默认开思考模式，必须显式关掉，否则又慢又贵还污染正文。
-    if (Providers.supportsThinkingSwitch(config.modelName)) {
+    // 思考模式控制：根据用户配置动态注入。
+    // 阿里云百炼/Qwen 系列及多数 OpenAI 兼容推理服务均支持 enable_thinking 参数。
+    if (config.enableThinking) {
+      body['enable_thinking'] = true;
+    } else if (Providers.supportsThinkingSwitch(config.modelName)) {
       body['enable_thinking'] = false;
     }
 
@@ -141,6 +144,8 @@ class LlmClient {
         .transform(utf8.decoder)
         .transform(const LineSplitter());
 
+    var insideReasoning = false;
+
     try {
       await for (final line in lines) {
         if (_cancelled) {
@@ -163,8 +168,30 @@ class LlmClient {
               if (first is Map) {
                 final delta = first['delta'];
                 if (delta is Map) {
-                  final c = delta['content'];
-                  if (c is String && c.isNotEmpty) chunk = c;
+                  final reasoning =
+                      delta['reasoning_content'] ?? delta['reasoning'];
+                  final content = delta['content'];
+                  final chunkBuf = StringBuffer();
+
+                  if (reasoning is String && reasoning.isNotEmpty) {
+                    if (!insideReasoning) {
+                      insideReasoning = true;
+                      chunkBuf.write('<think>');
+                    }
+                    chunkBuf.write(reasoning);
+                  }
+
+                  if (content is String && content.isNotEmpty) {
+                    if (insideReasoning) {
+                      insideReasoning = false;
+                      chunkBuf.write('</think>\n\n');
+                    }
+                    chunkBuf.write(content);
+                  }
+
+                  if (chunkBuf.isNotEmpty) {
+                    chunk = chunkBuf.toString();
+                  }
                 }
               }
             }
@@ -177,6 +204,12 @@ class LlmClient {
           _yieldedAny = true;
           yield chunk;
         }
+      }
+
+      if (insideReasoning) {
+        insideReasoning = false;
+        _yieldedAny = true;
+        yield '</think>\n\n';
       }
     } on AppError {
       rethrow;

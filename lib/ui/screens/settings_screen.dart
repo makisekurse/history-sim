@@ -279,6 +279,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       const SizedBox(height: 14),
 
+      _switchRow(
+        theme,
+        '开启深度思考（Thinking 模式）',
+        '开启后模型将先深入权衡局势再落笔成文，思考过程自动收纳进「推演思考」抽屉，正文不受影响；支持 Qwen 系列（如 qwen3.8-flash）、百炼及各类推理模型。',
+        _config.enableThinking,
+        (v) => _apply(_config.copyWith(enableThinking: v), immediate: true),
+      ),
+      const SizedBox(height: 14),
+
       if (_config.apiProvider == 'custom') ...<Widget>[
         TextField(
           controller: _baseUrlCtrl,

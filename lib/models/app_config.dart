@@ -51,6 +51,9 @@ class AppConfig {
   /// 主宰模式（玩家最高权限 / 绝对意志）
   bool godMode;
 
+  /// 模型深度思考模式（Thinking / Reasoning 模式）
+  bool enableThinking;
+
   AppConfig({
     this.apiProvider = 'bailian',
     this.baseUrl = '',
@@ -66,6 +69,7 @@ class AppConfig {
     this.autoHideHeader = true,
     this.keepScreenOn = true,
     this.godMode = false,
+    this.enableThinking = true,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -83,6 +87,7 @@ class AppConfig {
         'autoHideHeader': autoHideHeader,
         'keepScreenOn': keepScreenOn,
         'godMode': godMode,
+        'enableThinking': enableThinking,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -102,6 +107,7 @@ class AppConfig {
         autoHideHeader: json['autoHideHeader'] != false,
         keepScreenOn: json['keepScreenOn'] != false,
         godMode: json['godMode'] == true,
+        enableThinking: json['enableThinking'] != false,
       );
 
   AppConfig copyWith({
@@ -119,6 +125,7 @@ class AppConfig {
     bool? autoHideHeader,
     bool? keepScreenOn,
     bool? godMode,
+    bool? enableThinking,
   }) =>
       AppConfig(
         apiProvider: apiProvider ?? this.apiProvider,
@@ -135,6 +142,7 @@ class AppConfig {
         autoHideHeader: autoHideHeader ?? this.autoHideHeader,
         keepScreenOn: keepScreenOn ?? this.keepScreenOn,
         godMode: godMode ?? this.godMode,
+        enableThinking: enableThinking ?? this.enableThinking,
       );
 
   String encode() => jsonEncode(toJson());

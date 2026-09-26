@@ -16,6 +16,7 @@ import 'package:nijing/services/response_parser.dart';
 import 'package:nijing/services/save_service.dart';
 import 'package:nijing/services/story_export_service.dart';
 import 'package:nijing/services/text_layout.dart';
+import 'package:nijing/services/providers.dart';
 import 'package:nijing/services/wakelock_service.dart';
 import 'package:nijing/services/world_state_service.dart';
 
@@ -1566,6 +1567,27 @@ facts: 甲; 乙
         godMode: true,
       );
       expect(session.worldState.facts.first, '命令全军全员撤离至南山根据地');
+    });
+
+    test('Thinking 思考模式专项测试 (v1.3.2) · AppConfig 序列化与默认开启', () {
+      final cfg = AppConfig();
+      expect(cfg.enableThinking, isTrue);
+
+      final json = cfg.toJson();
+      expect(json['enableThinking'], isTrue);
+
+      final restored = AppConfig.fromJson(json);
+      expect(restored.enableThinking, isTrue);
+
+      final copy = cfg.copyWith(enableThinking: false);
+      expect(copy.enableThinking, isFalse);
+      expect(copy.toJson()['enableThinking'], isFalse);
+    });
+
+    test('Thinking 思考模式专项测试 (v1.3.2) · Providers 思考支持判定', () {
+      expect(Providers.supportsThinkingSwitch('qwen3.8-flash'), isTrue);
+      expect(Providers.supportsThinkingSwitch('Qwen3-Max'), isTrue);
+      expect(Providers.supportsThinkingSwitch('deepseek-chat'), isFalse);
     });
   });
 }
