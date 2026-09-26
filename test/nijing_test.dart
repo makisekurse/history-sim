@@ -1373,8 +1373,8 @@ facts: 甲; 乙
     });
   });
 
-  group('主宰模式与实机缺陷修复专项测试 (v1.3.0)', () {
-    test('ResponseParser · 正文标识泄露清洗（正文：/【正文】/正文如下：/（正文）等）', () {
+  group('主宰模式与实机缺陷修复专项测试 (v1.3.0 / v1.3.1)', () {
+    test('ResponseParser · 正文标识泄露清洗（正文：/【正文】/Markdown加粗/标题/变体等）', () {
       // 各种常见前缀变体
       expect(ResponseParser.cleanBodyPrefix('正文：雾气笼罩着江面。'), '雾气笼罩着江面。');
       expect(ResponseParser.cleanBodyPrefix('正文: 雾气笼罩着江面。'), '雾气笼罩着江面。');
@@ -1385,17 +1385,28 @@ facts: 甲; 乙
       expect(ResponseParser.cleanBodyPrefix('(正文): 雾气笼罩着江面。'), '雾气笼罩着江面。');
       expect(ResponseParser.cleanBodyPrefix('【正文内容】雾气笼罩着江面。'), '雾气笼罩着江面。');
       expect(ResponseParser.cleanBodyPrefix('正文内容：雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('【正文开始】\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('正文\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+
+      // Markdown 加粗与标题变体清洗（防大模型输出 Markdown 格式残留）
+      expect(ResponseParser.cleanBodyPrefix('**正文**：雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('**正文：**雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('**【正文】**\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('**正文如下：**\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('### 正文\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('### 【正文】\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+
       // 嵌套或重复前缀
-      expect(ResponseParser.cleanBodyPrefix('【正文】\n正文如下：\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('【正文】\n**正文如下：**\n雾气笼罩着江面。'), '雾气笼罩着江面。');
 
       // 关键防误杀：正文人物名为“正文”或正常语句不被误删
       expect(ResponseParser.cleanBodyPrefix('正文推门走入屋内，神色凝重。'), '正文推门走入屋内，神色凝重。');
       expect(ResponseParser.cleanBodyPrefix('正文在此处展开讨论。'), '正文在此处展开讨论。');
 
-      // 完整流水线测试
+      // 完整流水线测试（包含 Markdown 前缀）
       const rawWithPrefix = '''
 <date>1949年11月30日</date>
-【正文】
+**【正文】**
 夜色深沉，白公馆外的松柏在夜风中摇曳。
 <choices>
 1. 立即组织撤离
@@ -1405,6 +1416,17 @@ facts: 甲; 乙
       final parsed = ResponseParser.parse(rawWithPrefix);
       expect(parsed.body, '夜色深沉，白公馆外的松柏在夜风中摇曳。');
       expect(parsed.choices.length, 2);
+    });
+
+    test('ResponseParser · 天道敕令与主宰回响模板噪音清洗', () {
+      expect(ResponseParser.isBodyNoise('【天道敕令 · 玩家意志绝对主宰】'), isTrue);
+      expect(ResponseParser.isBodyNoise('【主宰天道敕令】'), isTrue);
+      expect(ResponseParser.isBodyNoise('天道敕令：全力推演。'), isTrue);
+      expect(ResponseParser.isTemplateNoise('【天道敕令 · 玩家意志绝对主宰】'), isTrue);
+      expect(ResponseParser.isTemplateNoise('【主宰天道敕令】'), isTrue);
+
+      // 防误杀合法文学描写
+      expect(ResponseParser.isBodyNoise('天道酬勤，众人日夜不辍。'), isFalse);
     });
 
     test('AppConfig · godMode 字段与序列化/复制', () {
@@ -1489,7 +1511,7 @@ facts: 甲; 乙
       expect(LlmClient.calculateMaxTokens(1200), 3600); // 1200 * 3 = 3600
     });
 
-    test('GameSession.appendChapter · 主宰模式事实状态一致性保障', () {
+    test('GameSession.appendChapter · 主宰模式事实状态一致性与防逆向误判保障', () {
       final slot = SaveSlot(
         id: 'slot_god_test',
         title: '主宰测试',
@@ -1497,7 +1519,7 @@ facts: 甲; 乙
       );
       final session = GameSession(slot);
 
-      // 模型返回的状态中未包含玩家的决定事实
+      // 场景 1：模型返回的状态中未包含玩家的决定事实
       session.appendChapter(
         content: '剧情顺利推演展开。',
         playerAction: '已策反守将张牧并夺取西门钥匙',
@@ -1514,6 +1536,36 @@ facts: 甲; 乙
       expect(session.worldState.facts, contains('已策反守将张牧并夺取西门钥匙'));
       expect(session.worldState.facts.first, '已策反守将张牧并夺取西门钥匙');
       expect(session.history.last.worldStateAfter!.facts, contains('已策反守将张牧并夺取西门钥匙'));
+
+      // 场景 2（核心防误判）：旧状态包含短词条（如「守军巡逻」），玩家输入长句「主角解决掉守军巡逻队并潜入内室」
+      // 过去错误代码用 act.contains(f) 判定导致该主宰意志被误判为「已覆盖」并静默丢弃。
+      // 现已修复为必须由 f/e 覆盖 act，确保长句意志必然成功落入事实首位。
+      session.appendChapter(
+        content: '主角悄无声息地穿过庭院。',
+        playerAction: '主角解决掉守军巡逻队并潜入内室',
+        date: '1949年12月1日',
+        choices: <String>['搜查', '伏击'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: 'raw',
+        stateRaw: '时间：更深\n地点：内府\n事实：守军巡逻；夜色深沉',
+        godMode: true,
+      );
+      expect(session.worldState.facts.first, '主角解决掉守军巡逻队并潜入内室');
+
+      // 场景 3（事件防误判）：旧事件中包含「撤离」，玩家主宰意志为「命令全军全员撤离至南山根据地」
+      session.appendChapter(
+        content: '部队迅速转向。',
+        playerAction: '命令全军全员撤离至南山根据地',
+        date: '1949年12月2日',
+        choices: <String>['构筑工事', '休整'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: 'raw',
+        stateRaw: '时间：清晨\n地点：郊外\n事件：撤离',
+        godMode: true,
+      );
+      expect(session.worldState.facts.first, '命令全军全员撤离至南山根据地');
     });
   });
 }

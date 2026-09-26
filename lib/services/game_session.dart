@@ -198,13 +198,18 @@ class GameSession {
     // 主宰模式状态一致性保障：若主宰行动陈述了确定事实，确保进入世界状态
     if (godMode && playerAction.trim().isNotEmpty) {
       final act = playerAction.trim();
-      final alreadyCovered = nextState.facts.any((f) => f.contains(act) || act.contains(f)) ||
-          nextState.events.any((e) => e.contains(act) || act.contains(e));
+      // 判定世界状态是否已包含玩家意志：必须是事实或事件已精确覆盖行动（绝不能反向以 act.contains(f) 判定，
+      // 否则行动中只要提到已有短词条如「城门」「守军」「大雨」就会导致主宰意志被错误跳过丢弃）。
+      final alreadyCovered = nextState.facts.any((f) => f == act || f.contains(act)) ||
+          nextState.events.any((e) => e == act || e.contains(act));
       if (!alreadyCovered) {
         final cappedAct = act.length > WorldState.maxItemChars
             ? act.substring(0, WorldState.maxItemChars)
             : act;
-        final newFacts = <String>[cappedAct, ...nextState.facts];
+        final newFacts = <String>[
+          cappedAct,
+          ...nextState.facts.where((f) => f != cappedAct),
+        ];
         if (newFacts.length > WorldState.maxFacts) {
           newFacts.removeLast();
         }
