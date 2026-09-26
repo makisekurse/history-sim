@@ -187,12 +187,30 @@ class GameSession {
     required String stateRaw,
     String? title,
     String thought = '',
+    bool godMode = false,
   }) {
     // 模型只提出状态变化；校验、合并、截断都在这里做。
-    final nextState = WorldStateService.merge(
+    var nextState = WorldStateService.merge(
       worldState,
       WorldStateService.parse(stateRaw),
     );
+
+    // 主宰模式状态一致性保障：若主宰行动陈述了确定事实，确保进入世界状态
+    if (godMode && playerAction.trim().isNotEmpty) {
+      final act = playerAction.trim();
+      final alreadyCovered = nextState.facts.any((f) => f.contains(act) || act.contains(f)) ||
+          nextState.events.any((e) => e.contains(act) || act.contains(e));
+      if (!alreadyCovered) {
+        final cappedAct = act.length > WorldState.maxItemChars
+            ? act.substring(0, WorldState.maxItemChars)
+            : act;
+        final newFacts = <String>[cappedAct, ...nextState.facts];
+        if (newFacts.length > WorldState.maxFacts) {
+          newFacts.removeLast();
+        }
+        nextState = nextState.copy()..facts = newFacts;
+      }
+    }
 
     final target = line;
     final node = ChapterNode(

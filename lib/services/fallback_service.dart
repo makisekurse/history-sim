@@ -64,13 +64,16 @@ class FallbackService {
     String frameworkOverride = '',
     String chronicle = '',
     String worldState = '',
+    bool? godMode,
   }) async* {
+    final isGod = godMode ?? config.godMode;
     final systemPrompt = PromptBuilder.buildSystemPrompt(
       config: config,
       book: book,
       frameworkOverride: frameworkOverride,
       chronicle: chronicle,
       worldState: worldState,
+      godMode: isGod,
     );
 
     AppError? lastError;
@@ -90,6 +93,7 @@ class FallbackService {
         systemPrompt: systemPrompt + nudge,
         history: history,
         playerAction: playerAction,
+        godMode: isGod,
       );
 
       final buffer = StringBuffer();

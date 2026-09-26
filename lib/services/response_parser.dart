@@ -207,16 +207,33 @@ class ResponseParser {
 
   /// 按位置剔除所有结构块跨度，其余原样保留。
   ///
-  /// 只做两件事：**按位置**去掉结构块，**逐行**去掉模板占位文字。
-  /// 绝不按内容猜着删 —— 小说正文本身完全可能出现竖线、书名号，
-  /// 盲删会吃掉正文。
+  /// 做三件事：
+  /// 1. **按位置**去掉结构块；
+  /// 2. **逐行**去掉模板占位文字；
+  /// 3. **智能清洗正文开头的模板标识前缀**（「正文：」「【正文】」「正文如下：」「（正文）」等）。
+  /// 绝不按内容猜着删 —— 小说正文本身完全可能出现竖线、书名号，盲删会吃掉正文。
   static String _rebuildBody(String raw, List<_Block> blocks) {
     final text = _removeBlockSpans(raw, blocks);
-    return text
+    final cleaned = text
         .split('\n')
         .where((l) => !isBodyNoise(l))
         .join('\n')
         .trim();
+    return cleanBodyPrefix(cleaned);
+  }
+
+  /// 正文开头残留的模板标识前缀（如「正文：」「【正文】」「正文如下：」「（正文）」等）。
+  static final RegExp _bodyPrefix = RegExp(
+    r'^\s*(?:[【\[（(]\s*正文(?:\s*内容|\s*如下)?\s*[】\]）)]\s*[:：]?|正文\s*(?:如下|内容)\s*[:：]?|正文\s*[:：])\s*',
+  );
+
+  /// 智能清洗正文开头的模板标识残留前缀，确保小说正文纯净。
+  static String cleanBodyPrefix(String body) {
+    var result = body.trim();
+    while (_bodyPrefix.hasMatch(result)) {
+      result = result.replaceFirst(_bodyPrefix, '').trim();
+    }
+    return result;
   }
 
   static String _removeBlockSpans(String raw, List<_Block> blocks) {

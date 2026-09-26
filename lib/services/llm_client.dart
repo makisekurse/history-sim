@@ -71,6 +71,9 @@ class LlmClient {
     }
   }
 
+  /// 根据单幕目标字数计算具备充足缓冲的 max_tokens（按字数约 3 倍比例配置，保底 2048，上限 8192）。
+  static int calculateMaxTokens(int maxWords) => (maxWords * 3).clamp(2048, 8192);
+
   Stream<String> _singleRequest({
     required AppConfig config,
     required String apiKey,
@@ -86,6 +89,7 @@ class LlmClient {
       'messages': messages,
       'stream': true,
       'temperature': config.temperature,
+      'max_tokens': calculateMaxTokens(config.maxWords),
     };
     // qwen3 系列默认开思考模式，必须显式关掉，否则又慢又贵还污染正文。
     if (Providers.supportsThinkingSwitch(config.modelName)) {

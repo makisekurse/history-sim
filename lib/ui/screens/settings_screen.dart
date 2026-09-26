@@ -334,6 +334,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _advancedSection(ThemeData theme) => <Widget>[
         _section(theme, '推演参数'),
         const SizedBox(height: 6),
+        _switchRow(
+          theme,
+          '主宰模式（绝对权限）',
+          '开启后视玩家所有意志与推演走向为不可撼动的既定事实，AI 将绝对服从且全力配合展开',
+          _config.godMode,
+          (v) => _apply(_config.copyWith(godMode: v), immediate: true),
+        ),
+        const SizedBox(height: 10),
         _slider(
           theme,
           label: '发散程度（temperature）',

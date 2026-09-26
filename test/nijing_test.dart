@@ -10,6 +10,8 @@ import 'package:nijing/models/world_line.dart';
 import 'package:nijing/models/world_state.dart';
 import 'package:nijing/services/file_export_service.dart';
 import 'package:nijing/services/game_session.dart';
+import 'package:nijing/services/llm_client.dart';
+import 'package:nijing/services/prompt_builder.dart';
 import 'package:nijing/services/response_parser.dart';
 import 'package:nijing/services/save_service.dart';
 import 'package:nijing/services/story_export_service.dart';
@@ -1368,6 +1370,150 @@ facts: 甲; 乙
       );
       // 非 Android 原生环境下安全返回 false，绝不抛未捕获异常
       expect(shared, isFalse);
+    });
+  });
+
+  group('主宰模式与实机缺陷修复专项测试 (v1.3.0)', () {
+    test('ResponseParser · 正文标识泄露清洗（正文：/【正文】/正文如下：/（正文）等）', () {
+      // 各种常见前缀变体
+      expect(ResponseParser.cleanBodyPrefix('正文：雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('正文: 雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('【正文】\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('【正文】：雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('正文如下：\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('（正文）雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('(正文): 雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('【正文内容】雾气笼罩着江面。'), '雾气笼罩着江面。');
+      expect(ResponseParser.cleanBodyPrefix('正文内容：雾气笼罩着江面。'), '雾气笼罩着江面。');
+      // 嵌套或重复前缀
+      expect(ResponseParser.cleanBodyPrefix('【正文】\n正文如下：\n雾气笼罩着江面。'), '雾气笼罩着江面。');
+
+      // 关键防误杀：正文人物名为“正文”或正常语句不被误删
+      expect(ResponseParser.cleanBodyPrefix('正文推门走入屋内，神色凝重。'), '正文推门走入屋内，神色凝重。');
+      expect(ResponseParser.cleanBodyPrefix('正文在此处展开讨论。'), '正文在此处展开讨论。');
+
+      // 完整流水线测试
+      const rawWithPrefix = '''
+<date>1949年11月30日</date>
+【正文】
+夜色深沉，白公馆外的松柏在夜风中摇曳。
+<choices>
+1. 立即组织撤离
+2. 坚守待命
+</choices>
+''';
+      final parsed = ResponseParser.parse(rawWithPrefix);
+      expect(parsed.body, '夜色深沉，白公馆外的松柏在夜风中摇曳。');
+      expect(parsed.choices.length, 2);
+    });
+
+    test('AppConfig · godMode 字段与序列化/复制', () {
+      final config = AppConfig();
+      expect(config.godMode, isFalse);
+
+      final modified = config.copyWith(godMode: true);
+      expect(modified.godMode, isTrue);
+
+      final json = modified.toJson();
+      expect(json['godMode'], isTrue);
+
+      final restored = AppConfig.fromJson(json);
+      expect(restored.godMode, isTrue);
+
+      final encoded = modified.encode();
+      final decoded = AppConfig.fromJson(jsonDecode(encoded) as Map<String, dynamic>);
+      expect(decoded.godMode, isTrue);
+    });
+
+    test('PromptKernel & PromptBuilder · 主宰模式天道敕令注入与提示词装配', () {
+      final config = AppConfig(maxWords: 500, godMode: false);
+      final book = WorldBook(id: 'test', name: '测试世界', worldview: '测试背景', playerRole: '主角');
+
+      // 普通模式不包含天道敕令
+      final normalKernel = PromptKernel.build(config, godMode: false);
+      expect(normalKernel.contains('【天道敕令 · 玩家意志绝对主宰】'), isFalse);
+
+      // 主宰模式包含天道敕令及核心法则
+      final godKernel = PromptKernel.build(config, godMode: true);
+      expect(godKernel.contains('【天道敕令 · 玩家意志绝对主宰】'), isTrue);
+      expect(godKernel.contains('既成事实法则'), isTrue);
+      expect(godKernel.contains('绝对顺从展开'), isTrue);
+      expect(godKernel.contains('严禁以任何理由反驳、否定、削弱'), isTrue);
+      expect(godKernel.contains('状态一致性保障'), isTrue);
+
+      // PromptBuilder.buildSystemPrompt 单次覆盖与全局继承
+      final sysPromptInherit = PromptBuilder.buildSystemPrompt(config: config, book: book);
+      expect(sysPromptInherit.contains('【天道敕令 · 玩家意志绝对主宰】'), isFalse);
+
+      final sysPromptOverride = PromptBuilder.buildSystemPrompt(config: config, book: book, godMode: true);
+      expect(sysPromptOverride.contains('【天道敕令 · 玩家意志绝对主宰】'), isTrue);
+
+      // PromptBuilder.buildMessages 主宰指令注入
+      final msgsNormal = PromptBuilder.buildMessages(
+        systemPrompt: 'sys',
+        history: <ChapterNode>[],
+        playerAction: '攻入城门',
+        godMode: false,
+      );
+      expect(msgsNormal.last['content'], contains('主角指示：“攻入城门”'));
+      expect(msgsNormal.last['content'], isNot(contains('【主宰天道敕令】')));
+
+      final msgsGod = PromptBuilder.buildMessages(
+        systemPrompt: 'sys',
+        history: <ChapterNode>[],
+        playerAction: '攻入城门',
+        godMode: true,
+      );
+      expect(msgsGod.last['content'], contains('【主宰天道敕令】'));
+      expect(msgsGod.last['content'], contains('施加绝对意志：“攻入城门”'));
+      expect(msgsGod.last['content'], contains('不可撼动的既成事实'));
+    });
+
+    test('PromptKernel · 单幕字数下限约束与严禁草率收束', () {
+      final config500 = AppConfig(maxWords: 500);
+      final kernel500 = PromptKernel.build(config500);
+      expect(kernel500, contains('下限不得少于 425 字')); // 500 * 0.85 = 425
+      expect(kernel500, contains('充分展开人物对话、神态细节'));
+      expect(kernel500, contains('严禁敷衍草率收束'));
+
+      final config800 = AppConfig(maxWords: 800);
+      final kernel800 = PromptKernel.build(config800);
+      expect(kernel800, contains('下限不得少于 680 字')); // 800 * 0.85 = 680
+    });
+
+    test('LlmClient · 根据 maxWords 动态配置充足缓冲的 max_tokens', () {
+      expect(LlmClient.calculateMaxTokens(300), 2048); // 300 * 3 = 900 -> clamp 保底 2048
+      expect(LlmClient.calculateMaxTokens(500), 2048); // 500 * 3 = 1500 -> clamp 保底 2048
+      expect(LlmClient.calculateMaxTokens(800), 2400); // 800 * 3 = 2400
+      expect(LlmClient.calculateMaxTokens(1000), 3000); // 1000 * 3 = 3000
+      expect(LlmClient.calculateMaxTokens(1200), 3600); // 1200 * 3 = 3600
+    });
+
+    test('GameSession.appendChapter · 主宰模式事实状态一致性保障', () {
+      final slot = SaveSlot(
+        id: 'slot_god_test',
+        title: '主宰测试',
+        worldBook: WorldBook(id: 'wb1', name: '书'),
+      );
+      final session = GameSession(slot);
+
+      // 模型返回的状态中未包含玩家的决定事实
+      session.appendChapter(
+        content: '剧情顺利推演展开。',
+        playerAction: '已策反守将张牧并夺取西门钥匙',
+        date: '1949年12月1日',
+        choices: <String>['进城', '布防'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: 'raw',
+        stateRaw: '时间：深夜\n地点：西门外\n事实：夜色深沉；城门紧闭',
+        godMode: true,
+      );
+
+      // 验证：玩家的主宰事实被自动保障记入已知事实首位
+      expect(session.worldState.facts, contains('已策反守将张牧并夺取西门钥匙'));
+      expect(session.worldState.facts.first, '已策反守将张牧并夺取西门钥匙');
+      expect(session.history.last.worldStateAfter!.facts, contains('已策反守将张牧并夺取西门钥匙'));
     });
   });
 }

@@ -48,6 +48,9 @@ class AppConfig {
   /// 阅读防熄屏（保持屏幕常亮）
   bool keepScreenOn;
 
+  /// 主宰模式（玩家最高权限 / 绝对意志）
+  bool godMode;
+
   AppConfig({
     this.apiProvider = 'bailian',
     this.baseUrl = '',
@@ -62,6 +65,7 @@ class AppConfig {
     this.autoScrollToLatest = true,
     this.autoHideHeader = true,
     this.keepScreenOn = true,
+    this.godMode = false,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -78,6 +82,7 @@ class AppConfig {
         'autoScrollToLatest': autoScrollToLatest,
         'autoHideHeader': autoHideHeader,
         'keepScreenOn': keepScreenOn,
+        'godMode': godMode,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -96,6 +101,7 @@ class AppConfig {
         autoScrollToLatest: json['autoScrollToLatest'] != false,
         autoHideHeader: json['autoHideHeader'] != false,
         keepScreenOn: json['keepScreenOn'] != false,
+        godMode: json['godMode'] == true,
       );
 
   AppConfig copyWith({
@@ -112,6 +118,7 @@ class AppConfig {
     bool? autoScrollToLatest,
     bool? autoHideHeader,
     bool? keepScreenOn,
+    bool? godMode,
   }) =>
       AppConfig(
         apiProvider: apiProvider ?? this.apiProvider,
@@ -127,6 +134,7 @@ class AppConfig {
         autoScrollToLatest: autoScrollToLatest ?? this.autoScrollToLatest,
         autoHideHeader: autoHideHeader ?? this.autoHideHeader,
         keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+        godMode: godMode ?? this.godMode,
       );
 
   String encode() => jsonEncode(toJson());

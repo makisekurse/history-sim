@@ -82,11 +82,19 @@ class _ReaderScreenState extends State<ReaderScreen>
   GlobalKey _chapterKeyFor(int index) =>
       _chapterKeys.putIfAbsent(index, () => GlobalKey());
 
+  /// 托管自由输入框控制器与焦点，防止列表滚动及界面重建时草稿内容丢失。
+  final TextEditingController _inputController = TextEditingController();
+  final FocusNode _inputFocusNode = FocusNode();
+
+  /// 主宰模式（最高权限）单次/全局运行状态，初始继承全局配置。
+  late bool _godMode;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _config = widget.config;
+    _godMode = _config.godMode;
     _slot = widget.slot;
     _session = GameSession(_slot);
     _scroll.addListener(_onScroll);
@@ -104,6 +112,8 @@ class _ReaderScreenState extends State<ReaderScreen>
     _headerTimer?.cancel();
     _client.cancel();
     _scroll.dispose();
+    _inputController.dispose();
+    _inputFocusNode.dispose();
     _exitImmersive();
     super.dispose();
   }
@@ -295,8 +305,9 @@ class _ReaderScreenState extends State<ReaderScreen>
 
   // ---------- 生成 ----------
 
-  Future<void> _act(String action) async {
+  Future<void> _act(String action, {bool? godMode}) async {
     if (_busy) return;
+    final isGod = godMode ?? _godMode;
     setState(() {
       _busy = true;
       _pendingAction = action;
@@ -319,6 +330,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       playerAction: action,
       chronicle: _chronicle,
       worldState: WorldStateService.renderForPrompt(_worldState),
+      godMode: isGod,
     );
 
     await for (final ev in stream) {
@@ -354,6 +366,7 @@ class _ReaderScreenState extends State<ReaderScreen>
           rawOutput: p.rawOutput,
           stateRaw: p.stateRaw,
           thought: p.thought,
+          godMode: isGod,
         );
         _live = '';
         _pendingAction = '';
@@ -616,13 +629,25 @@ class _ReaderScreenState extends State<ReaderScreen>
                                     const SizedBox(height: 6),
                                     FreeInputBar(
                                       busy: false,
-                                      onSend: _act,
+                                      controller: _inputController,
+                                      focusNode: _inputFocusNode,
+                                      godMode: _godMode,
+                                      onToggleGodMode: (v) =>
+                                          setState(() => _godMode = v),
+                                      onSend: (text) =>
+                                          _act(text, godMode: _godMode),
                                       onCancel: _cancel,
                                     ),
                                   ] else
                                     FreeInputBar(
                                       busy: true,
-                                      onSend: _act,
+                                      controller: _inputController,
+                                      focusNode: _inputFocusNode,
+                                      godMode: _godMode,
+                                      onToggleGodMode: (v) =>
+                                          setState(() => _godMode = v),
+                                      onSend: (text) =>
+                                          _act(text, godMode: _godMode),
                                       onCancel: _cancel,
                                     ),
                                 ],
@@ -976,7 +1001,10 @@ class _ReaderScreenState extends State<ReaderScreen>
                         builder: (_) => SettingsScreen(
                           config: _config,
                           onConfigChanged: (c) {
-                            setState(() => _config = c);
+                            setState(() {
+                              _config = c;
+                              _godMode = c.godMode;
+                            });
                             widget.onConfigChanged(c);
                             _applyWakelock();
                           },
