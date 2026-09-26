@@ -82,6 +82,9 @@ class ChapterTocSheet extends StatelessWidget {
                     )
                   : ListView.separated(
                       shrinkWrap: true,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       itemCount: history.length,
                       separatorBuilder: (_, _) => Divider(

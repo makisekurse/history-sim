@@ -91,6 +91,9 @@ class AnnotationSheet {
                         )
                       : ListView(
                           shrinkWrap: true,
+                          physics: const BouncingScrollPhysics(
+                            parent: AlwaysScrollableScrollPhysics(),
+                          ),
                           children: children,
                         ),
                 ),

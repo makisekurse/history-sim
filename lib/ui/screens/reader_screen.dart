@@ -12,6 +12,7 @@ import '../../models/world_line.dart';
 import '../../models/world_state.dart';
 import '../../services/chronicle_service.dart';
 import '../../services/fallback_service.dart';
+import '../../services/file_export_service.dart';
 import '../../services/game_session.dart';
 import '../../services/llm_client.dart';
 import '../../services/response_parser.dart';
@@ -780,7 +781,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.72,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -794,6 +795,9 @@ class _ReaderScreenState extends State<ReaderScreen>
                 const SizedBox(height: 14),
                 Flexible(
                   child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
                     child: s.isEmpty
                         ? Text(
                             '还没有世界状态。\n推演一幕之后，这里会记录此刻的时间、'
@@ -871,111 +875,123 @@ class _ReaderScreenState extends State<ReaderScreen>
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.explore_outlined),
-              title: const Text('世界观察'),
-              subtitle: const Text('此刻的时间、地点、人物与未决之事'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showWorldState();
-              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            ListTile(
-              leading: const Icon(Icons.timeline_rounded),
-              title: const Text('编年史时间线'),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => ChronicleScreen(history: _history),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.explore_outlined),
+                  title: const Text('世界观察'),
+                  subtitle: const Text('此刻的时间、地点、人物与未决之事'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showWorldState();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.timeline_rounded),
+                  title: const Text('编年史时间线'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => ChronicleScreen(history: _history),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.groups_rounded),
+                  title: const Text('人物志'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => CastScreen(history: _history),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.menu_book_rounded),
+                  title: const Text('本幕词条'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    if (_history.isEmpty) return;
+                    AnnotationSheet.showGlossary(
+                        context, _history.last.glossary);
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: const Text('重新生成本幕'),
+                  enabled: !_busy && _history.isNotEmpty,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _rerollLast();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.history_rounded),
+                  title: Text(
+                    _session.lines.length > 1
+                        ? '世界线（${_session.lines.length} 条）'
+                        : '世界线',
                   ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.groups_rounded),
-              title: const Text('人物志'),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => CastScreen(history: _history),
+                  subtitle: Text(
+                    _session.lines.length > 1
+                        ? '当前：${_session.line.name} · 可切换 / 分岔'
+                        : '走错了可以从某一幕分岔出新世界线',
                   ),
-                );
-              },
+                  enabled: !_busy && _history.isNotEmpty,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showWorldLines();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.file_download_outlined),
+                  title: const Text('导出推演故事'),
+                  subtitle: const Text('导出为 Markdown / TXT 物理文件并支持分享'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showExportSheet();
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.tune_rounded),
+                  title: const Text('设置'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => SettingsScreen(
+                          config: _config,
+                          onConfigChanged: (c) {
+                            setState(() => _config = c);
+                            widget.onConfigChanged(c);
+                            _applyWakelock();
+                          },
+                        ),
+                      ),
+                    );
+                    if (mounted) setState(() {});
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.menu_book_rounded),
-              title: const Text('本幕词条'),
-              onTap: () {
-                Navigator.pop(ctx);
-                if (_history.isEmpty) return;
-                AnnotationSheet.showGlossary(
-                    context, _history.last.glossary);
-              },
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.refresh_rounded),
-              title: const Text('重新生成本幕'),
-              enabled: !_busy && _history.isNotEmpty,
-              onTap: () {
-                Navigator.pop(ctx);
-                _rerollLast();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.history_rounded),
-              title: Text(
-                _session.lines.length > 1
-                    ? '世界线（${_session.lines.length} 条）'
-                    : '世界线',
-              ),
-              subtitle: Text(
-                _session.lines.length > 1
-                    ? '当前：${_session.line.name} · 可切换 / 分岔'
-                    : '走错了可以从某一幕分岔出新世界线',
-              ),
-              enabled: !_busy && _history.isNotEmpty,
-              onTap: () {
-                Navigator.pop(ctx);
-                _showWorldLines();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.file_download_outlined),
-              title: const Text('导出推演故事'),
-              subtitle: const Text('导出为 Markdown 或纯文本小说并复制'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showExportSheet();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.tune_rounded),
-              title: const Text('设置'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => SettingsScreen(
-                      config: _config,
-                      onConfigChanged: (c) {
-                        setState(() => _config = c);
-                        widget.onConfigChanged(c);
-                        _applyWakelock();
-                      },
-                    ),
-                  ),
-                );
-                if (mounted) setState(() {});
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -989,62 +1005,150 @@ class _ReaderScreenState extends State<ReaderScreen>
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                '导出推演故事',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: palette.ink,
-                ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '导出推演故事',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: palette.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '将当前世界线的长篇小说按章节规范排版导出。支持保存为物理文件至系统下载目录，以及系统原生分享与复制。',
+                    style: TextStyle(
+                        fontSize: 12, height: 1.5, color: palette.muted),
+                  ),
+                  const SizedBox(height: 12),
+                  ListTile(
+                    leading: const Icon(Icons.file_present_rounded),
+                    title: const Text('导出为 Markdown 文件（.md）'),
+                    subtitle: const Text('保存至系统下载目录，带标题层级、抉择与大事记'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _exportStoryFile(isMarkdown: true);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.description_outlined),
+                    title: const Text('导出为纯文本文件（.txt）'),
+                    subtitle: const Text('保存至系统下载目录，带全角缩进与分段的小说纯文本'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _exportStoryFile(isMarkdown: false);
+                    },
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.copy_rounded),
+                    title: const Text('复制为 Markdown 格式'),
+                    subtitle: const Text('仅复制结构化 Markdown 文本到剪贴板'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      final md = StoryExportService.toMarkdown(
+                        book: _slot.worldBook,
+                        line: _session.line,
+                        history: _history,
+                        chronicle: _chronicle,
+                        worldState: _worldState,
+                      );
+                      await Clipboard.setData(ClipboardData(text: md));
+                      if (mounted) _toast('Markdown 故事已复制到剪贴板（${md.length} 字）');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.content_copy_rounded),
+                    title: const Text('复制为纯文本小说'),
+                    subtitle: const Text('仅复制纯文本小说内容到剪贴板'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      final txt = StoryExportService.toPlainText(
+                        book: _slot.worldBook,
+                        line: _session.line,
+                        history: _history,
+                        chronicle: _chronicle,
+                        worldState: _worldState,
+                      );
+                      await Clipboard.setData(ClipboardData(text: txt));
+                      if (mounted) _toast('纯文本小说已复制到剪贴板（${txt.length} 字）');
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                '将当前世界线的长篇小说按章节规范排版导出。',
-                style: TextStyle(fontSize: 12, color: palette.muted),
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(Icons.code_rounded),
-                title: const Text('复制为 Markdown 格式'),
-                subtitle: const Text('带标题层级、引用块、段落与大事记的结构化排版'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final md = StoryExportService.toMarkdown(
-                    book: _slot.worldBook,
-                    line: _session.line,
-                    history: _history,
-                    chronicle: _chronicle,
-                    worldState: _worldState,
-                  );
-                  await Clipboard.setData(ClipboardData(text: md));
-                  if (mounted) _toast('Markdown 故事已复制到剪贴板（${md.length} 字）');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.article_outlined),
-                title: const Text('复制为纯文本小说'),
-                subtitle: const Text('带全角缩进与分段的小说纯文本'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final txt = StoryExportService.toPlainText(
-                    book: _slot.worldBook,
-                    line: _session.line,
-                    history: _history,
-                    chronicle: _chronicle,
-                    worldState: _worldState,
-                  );
-                  await Clipboard.setData(ClipboardData(text: txt));
-                  if (mounted) _toast('纯文本小说已复制到剪贴板（${txt.length} 字）');
-                },
-              ),
-            ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportStoryFile({required bool isMarkdown}) async {
+    final bookName = _slot.worldBook.name.trim().isEmpty
+        ? '推演故事'
+        : _slot.worldBook.name.trim();
+    final lineName =
+        _session.line.name.trim().isEmpty ? '主线' : _session.line.name.trim();
+    final ts = FileExportService.formatTimestamp();
+    final ext = isMarkdown ? 'md' : 'txt';
+    final mimeType = isMarkdown ? 'text/markdown' : 'text/plain';
+    final fileName =
+        '拟境_${FileExportService.sanitizeFileName(bookName)}_${FileExportService.sanitizeFileName(lineName)}_第${_history.length}幕_$ts.$ext';
+
+    final content = isMarkdown
+        ? StoryExportService.toMarkdown(
+            book: _slot.worldBook,
+            line: _session.line,
+            history: _history,
+            chronicle: _chronicle,
+            worldState: _worldState,
+          )
+        : StoryExportService.toPlainText(
+            book: _slot.worldBook,
+            line: _session.line,
+            history: _history,
+            chronicle: _chronicle,
+            worldState: _worldState,
+          );
+
+    final res = await FileExportService.exportFile(
+      fileName: fileName,
+      content: content,
+      mimeType: mimeType,
+    );
+
+    await Clipboard.setData(ClipboardData(text: content));
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          res.success
+              ? '已导出保存至：${res.path}\n（已同时复制到剪贴板）'
+              : '保存失败：${res.message}（已复制到剪贴板）',
+        ),
+        action: SnackBarAction(
+          label: '系统分享',
+          onPressed: () => FileExportService.shareText(
+            title: '${_slot.worldBook.name} · 推演故事',
+            text: content,
           ),
         ),
       ),
@@ -1064,28 +1168,31 @@ class _ReaderScreenState extends State<ReaderScreen>
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.78,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 4),
-                child: Text(
-                  '世界线时空分岔树',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 4),
+                  child: Text(
+                    '世界线时空分岔树',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-                child: Text(
-                  '清晰展示从第几幕分岔、走向与幕数。轻触任一条即可直接切换过去。',
-                  style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                  child: Text(
+                    '清晰展示从第几幕分岔、走向与幕数。轻触任一条即可直接切换过去。',
+                    style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                  ),
                 ),
-              ),
-              Flexible(
-                child: SingleChildScrollView(
+                Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: WorldLineTreeView(
                     lines: _session.lines,
@@ -1104,20 +1211,20 @@ class _ReaderScreenState extends State<ReaderScreen>
                     },
                   ),
                 ),
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.call_split_rounded),
-                title: const Text('从某一幕分岔出新世界线'),
-                subtitle: const Text('保留到那一幕，之后重新做选择'),
-                enabled: !_busy && _history.isNotEmpty,
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showBranchPicker();
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.call_split_rounded),
+                  title: const Text('从某一幕分岔出新世界线'),
+                  subtitle: const Text('保留到那一幕，之后重新做选择'),
+                  enabled: !_busy && _history.isNotEmpty,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showBranchPicker();
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ),
       ),
@@ -1138,7 +1245,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.62,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.82,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1162,6 +1269,9 @@ class _ReaderScreenState extends State<ReaderScreen>
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
                   itemCount: _history.length,
                   itemBuilder: (_, i) {
                     final node = _history[i];
@@ -1397,75 +1507,87 @@ class _ReaderScreenState extends State<ReaderScreen>
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.copy_rounded),
-              title: const Text('复制本幕'),
-              subtitle: const Text('标题 + 你的行动 + 正文'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _copyChapter(chapter);
-              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            ListTile(
-              leading: const Icon(Icons.edit_note_rounded),
-              title: const Text('修改错字 / 编辑本幕'),
-              subtitle: const Text('就地修正本幕正文中的错别字并保存'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _editChapterContentDialog(chapter);
-              },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('复制本幕'),
+                  subtitle: const Text('标题 + 你的行动 + 正文'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _copyChapter(chapter);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.edit_note_rounded),
+                  title: const Text('修改错字 / 编辑本幕'),
+                  subtitle: const Text('就地修正本幕正文中的错别字并保存'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _editChapterContentDialog(chapter);
+                  },
+                ),
+                if (chapter.thought.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.psychology_outlined),
+                    title: const Text('推演思考'),
+                    subtitle: const Text('查看模型生成本幕时的思维链过程'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      ThoughtSheet.show(
+                        context,
+                        title: chapter.title,
+                        thought: chapter.thought,
+                      );
+                    },
+                  ),
+                if (chapter.glossary.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.menu_book_rounded),
+                    title: const Text('本幕词条'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      AnnotationSheet.showGlossary(context, chapter.glossary);
+                    },
+                  ),
+                if (chapter.cast.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.groups_rounded),
+                    title: const Text('本幕人物'),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      AnnotationSheet.showCast(context, chapter.cast);
+                    },
+                  ),
+                ListTile(
+                  leading: const Icon(Icons.data_object_rounded),
+                  title: const Text('查看原始输出'),
+                  subtitle: Text(
+                    chapter.rawOutput.isEmpty
+                        ? '本幕没有留存原始输出'
+                        : '模型返回的原文，用于排查格式问题',
+                  ),
+                  enabled: chapter.rawOutput.isNotEmpty,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showRawOutput(chapter);
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-            if (chapter.thought.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.psychology_outlined),
-                title: const Text('推演思考'),
-                subtitle: const Text('查看模型生成本幕时的思维链过程'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  ThoughtSheet.show(
-                    context,
-                    title: chapter.title,
-                    thought: chapter.thought,
-                  );
-                },
-              ),
-            if (chapter.glossary.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.menu_book_rounded),
-                title: const Text('本幕词条'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  AnnotationSheet.showGlossary(context, chapter.glossary);
-                },
-              ),
-            if (chapter.cast.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.groups_rounded),
-                title: const Text('本幕人物'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  AnnotationSheet.showCast(context, chapter.cast);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.data_object_rounded),
-              title: const Text('查看原始输出'),
-              subtitle: Text(
-                chapter.rawOutput.isEmpty
-                    ? '本幕没有留存原始输出'
-                    : '模型返回的原文，用于排查格式问题',
-              ),
-              enabled: chapter.rawOutput.isNotEmpty,
-              onTap: () {
-                Navigator.pop(ctx);
-                _showRawOutput(chapter);
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1555,7 +1677,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -1593,6 +1715,9 @@ class _ReaderScreenState extends State<ReaderScreen>
                 const SizedBox(height: 8),
                 Flexible(
                   child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
                     child: SelectableText(
                       chapter.rawOutput,
                       style: TextStyle(

@@ -1,15 +1,24 @@
 package io.github.makisekurse.nijing
 
+import android.content.ContentValues
+import android.content.Intent
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
     private val wakelockChannel = "io.github.makisekurse.nijing/wakelock"
+    private val fileExportChannel = "io.github.makisekurse.nijing/file_export"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, wakelockChannel).setMethodCallHandler { call, result ->
             when (call.method) {
                 "enable" -> {
@@ -23,5 +32,91 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, fileExportChannel).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "saveFile" -> {
+                    val fileName = call.argument<String>("fileName") ?: "export_${System.currentTimeMillis()}.txt"
+                    val content = call.argument<String>("content") ?: ""
+                    val mimeType = call.argument<String>("mimeType") ?: "text/plain"
+                    val savedPath = saveFileToPublic(fileName, content, mimeType)
+                    if (savedPath != null) {
+                        result.success(savedPath)
+                    } else {
+                        result.error("SAVE_FAILED", "Failed to save file", null)
+                    }
+                }
+                "shareText" -> {
+                    val title = call.argument<String>("title") ?: "分享"
+                    val text = call.argument<String>("text") ?: ""
+                    try {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            this.type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, title)
+                            putExtra(Intent.EXTRA_TEXT, text)
+                        }
+                        val chooser = Intent.createChooser(intent, title)
+                        startActivity(chooser)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("SHARE_FAILED", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun saveFileToPublic(fileName: String, content: String, mimeType: String): String? {
+        // 1. Android 10+ (API 29+) MediaStore.Downloads
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/nijing")
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(content.toByteArray(Charsets.UTF_8))
+                    }
+                    return "/storage/emulated/0/Download/nijing/$fileName"
+                }
+            } catch (_: Throwable) {
+                // Fallback to direct file system
+            }
+        }
+
+        // 2. Direct Download/nijing directory
+        try {
+            val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val appDir = File(downloadDir, "nijing")
+            if (!appDir.exists()) appDir.mkdirs()
+            val file = File(appDir, fileName)
+            FileOutputStream(file).use { fos ->
+                fos.write(content.toByteArray(Charsets.UTF_8))
+            }
+            return file.absolutePath
+        } catch (_: Throwable) {
+            // Fallback to app external files dir
+        }
+
+        // 3. Fallback to getExternalFilesDir (always writable)
+        try {
+            val extDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: getExternalFilesDir(null)
+            if (extDir != null) {
+                if (!extDir.exists()) extDir.mkdirs()
+                val file = File(extDir, fileName)
+                FileOutputStream(file).use { fos ->
+                    fos.write(content.toByteArray(Charsets.UTF_8))
+                }
+                return file.absolutePath
+            }
+        } catch (_: Throwable) {
+            // Failed
+        }
+
+        return null
     }
 }

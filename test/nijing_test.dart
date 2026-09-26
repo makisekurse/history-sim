@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nijing/models/annotation.dart';
 import 'package:nijing/models/app_config.dart';
@@ -6,6 +7,7 @@ import 'package:nijing/models/save_slot.dart';
 import 'package:nijing/models/world_book.dart';
 import 'package:nijing/models/world_line.dart';
 import 'package:nijing/models/world_state.dart';
+import 'package:nijing/services/file_export_service.dart';
 import 'package:nijing/services/game_session.dart';
 import 'package:nijing/services/response_parser.dart';
 import 'package:nijing/services/story_export_service.dart';
@@ -14,6 +16,8 @@ import 'package:nijing/services/wakelock_service.dart';
 import 'package:nijing/services/world_state_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('WorldBook 导入', () {
     test('JSON 正常解析', () {
       final book = WorldBook.fromImportText('''
@@ -1262,6 +1266,83 @@ facts: 甲; 乙
       // 切换回主线，主线正文未被破坏
       session.switchLine(slot.lines.first.id);
       expect(session.history[0].content, '第一幕正文');
+    });
+  });
+
+  group('FileExportService · 物理文件导出与系统分享', () {
+    late Directory tempDir;
+
+    setUp(() {
+      tempDir = Directory.systemTemp.createTempSync('nijing_export_test_');
+      FileExportService.testExportDirectory = tempDir;
+    });
+
+    tearDown(() {
+      FileExportService.testExportDirectory = null;
+      try {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    });
+
+    test('文件名安全过滤与时间戳格式化', () {
+      expect(FileExportService.sanitizeFileName('大唐:开元/盛世*测试?'), '大唐_开元_盛世_测试_');
+      expect(FileExportService.sanitizeFileName(''), '未命名');
+      expect(FileExportService.sanitizeFileName('   '), '未命名');
+      expect(FileExportService.sanitizeFileName('a' * 100).length, 50);
+
+      final ts = FileExportService.formatTimestamp(DateTime(2026, 9, 26, 22, 0, 5));
+      expect(ts, '20260926_220005');
+    });
+
+    test('物理文件落盘与内容精确读回（Markdown / TXT / JSON）', () async {
+      // 1. Markdown 导出
+      const mdContent = '# 大明王朝\n\n> 时代：嘉靖\n\n## 第一幕\n\n正文段落。';
+      final mdRes = await FileExportService.exportFile(
+        fileName: '大明_测试.md',
+        content: mdContent,
+        mimeType: 'text/markdown',
+      );
+      expect(mdRes.success, isTrue);
+      expect(mdRes.path, isNotNull);
+      final mdFile = File(mdRes.path!);
+      expect(mdFile.existsSync(), isTrue);
+      expect(await mdFile.readAsString(), mdContent);
+
+      // 2. JSON 世界书导出
+      const jsonContent = '{"name":"架空江湖","worldview":"刀光剑影"}';
+      final jsonRes = await FileExportService.exportFile(
+        fileName: '世界书_测试.json',
+        content: jsonContent,
+        mimeType: 'application/json',
+      );
+      expect(jsonRes.success, isTrue);
+      expect(jsonRes.path, isNotNull);
+      final jsonFile = File(jsonRes.path!);
+      expect(jsonFile.existsSync(), isTrue);
+      expect(await jsonFile.readAsString(), jsonContent);
+
+      // 3. 纯文本小说导出
+      const txtContent = '《拟境故事》\n\n　　秋风渐起，落叶萧萧。';
+      final txtRes = await FileExportService.exportFile(
+        fileName: '故事_测试.txt',
+        content: txtContent,
+        mimeType: 'text/plain',
+      );
+      expect(txtRes.success, isTrue);
+      final txtFile = File(txtRes.path!);
+      expect(txtFile.existsSync(), isTrue);
+      expect(await txtFile.readAsString(), txtContent);
+    });
+
+    test('系统分享与异常调用安全不崩溃', () async {
+      final shared = await FileExportService.shareText(
+        title: '测试分享',
+        text: '这是一段测试分享内容',
+      );
+      // 非 Android 原生环境下安全返回 false，绝不抛未捕获异常
+      expect(shared, isFalse);
     });
   });
 }

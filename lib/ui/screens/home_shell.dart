@@ -7,6 +7,7 @@ import '../../data/world_book_repository.dart';
 import '../../models/app_config.dart';
 import '../../models/save_slot.dart';
 import '../../models/world_book.dart';
+import '../../services/file_export_service.dart';
 import '../../services/game_session.dart';
 import '../../services/save_service.dart';
 import 'about_screen.dart';
@@ -198,26 +199,35 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: <Widget>[
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
-              child: Text('选择要进入的世界', style: TextStyle(fontSize: 14)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            for (final b in playable)
-              ListTile(
-                title: Text(b.name, style: const TextStyle(fontSize: 14.5)),
-                subtitle: Text(
-                  _slotForBook(b.id) == null
-                      ? (b.era.trim().isEmpty ? '还没开始' : b.era)
-                      : '已有进度 · 第 ${_slotForBook(b.id)!.chapterCount} 幕',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                onTap: () => Navigator.pop(ctx, b),
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
+                child: Text('选择要进入的世界', style: TextStyle(fontSize: 14)),
               ),
-          ],
+              for (final b in playable)
+                ListTile(
+                  title: Text(b.name, style: const TextStyle(fontSize: 14.5)),
+                  subtitle: Text(
+                    _slotForBook(b.id) == null
+                        ? (b.era.trim().isEmpty ? '还没开始' : b.era)
+                        : '已有进度 · 第 ${_slotForBook(b.id)!.chapterCount} 幕',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () => Navigator.pop(ctx, b),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -234,32 +244,38 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '《${book.name}》已经有一局了',
-                  style: const TextStyle(fontSize: 14),
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '《${book.name}》已经有一局了',
+                    style: const TextStyle(fontSize: 14),
+                  ),
                 ),
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: Text('继续 · 第 ${existing.chapterCount} 幕'),
-              onTap: () => Navigator.pop(ctx, 'resume'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.restart_alt_rounded),
-              title: const Text('重新开始一局'),
-              subtitle: const Text('当前进度会被清空'),
-              onTap: () => Navigator.pop(ctx, 'restart'),
-            ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.play_arrow_rounded),
+                title: Text('继续 · 第 ${existing.chapterCount} 幕'),
+                onTap: () => Navigator.pop(ctx, 'resume'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.restart_alt_rounded),
+                title: const Text('重新开始一局'),
+                subtitle: const Text('当前进度会被清空'),
+                onTap: () => Navigator.pop(ctx, 'restart'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -304,23 +320,29 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.auto_awesome_rounded),
-              title: const Text('快速创建'),
-              subtitle: const Text('一句话描述，AI 扩写成完整设定（生成后可改）'),
-              onTap: () => Navigator.pop(ctx, 'quick'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_note_rounded),
-              title: const Text('手动编写'),
-              subtitle: const Text('从空白模板开始，逐项自己填'),
-              onTap: () => Navigator.pop(ctx, 'blank'),
-            ),
-          ],
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.auto_awesome_rounded),
+                title: const Text('快速创建'),
+                subtitle: const Text('一句话描述，AI 扩写成完整设定（生成后可改）'),
+                onTap: () => Navigator.pop(ctx, 'quick'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_note_rounded),
+                title: const Text('手动编写'),
+                subtitle: const Text('从空白模板开始，逐项自己填'),
+                onTap: () => Navigator.pop(ctx, 'blank'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -382,10 +404,14 @@ class _HomeShellState extends State<HomeShell> {
           right: 20,
           bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
             const Text('导入世界书', style: TextStyle(fontSize: 14)),
             const SizedBox(height: 6),
             Text(
@@ -437,7 +463,8 @@ class _HomeShellState extends State<HomeShell> {
           ],
         ),
       ),
-    );
+    ),
+  );
     if (text == null || text.trim().isEmpty) return;
 
     try {
@@ -458,62 +485,111 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.play_arrow_rounded),
-              title: const Text('进入这个世界'),
-              enabled: book.isPlayable,
-              onTap: () {
-                Navigator.pop(ctx);
-                _startSessionWith(book);
-              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            if (_slotForBook(book.id) != null)
-              ListTile(
-                leading: const Icon(Icons.restart_alt_rounded),
-                title: const Text('重新开始一局'),
-                subtitle: Text(
-                  '当前进度第 ${_slotForBook(book.id)!.chapterCount} 幕，会被清空',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.play_arrow_rounded),
+                  title: const Text('进入这个世界'),
+                  enabled: book.isPlayable,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _startSessionWith(book);
+                  },
                 ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _restartBook(book);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.edit_rounded),
-              title: const Text('编辑'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _editBook(book);
-              },
+                if (_slotForBook(book.id) != null)
+                  ListTile(
+                    leading: const Icon(Icons.restart_alt_rounded),
+                    title: const Text('重新开始一局'),
+                    subtitle: Text(
+                      '当前进度第 ${_slotForBook(book.id)!.chapterCount} 幕，会被清空',
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _restartBook(book);
+                    },
+                  ),
+                ListTile(
+                  leading: const Icon(Icons.edit_rounded),
+                  title: const Text('编辑'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _editBook(book);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.file_present_rounded),
+                  title: const Text('导出世界书文件（JSON）'),
+                  subtitle: const Text('保存至下载目录，可直接传输、备份与分享'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final json = book.exportToJson();
+                    final ts = FileExportService.formatTimestamp();
+                    final safeName =
+                        FileExportService.sanitizeFileName(book.name);
+                    final fileName = '拟境_世界书_${safeName}_$ts.json';
+                    final res = await FileExportService.exportFile(
+                      fileName: fileName,
+                      content: json,
+                      mimeType: 'application/json',
+                    );
+                    await Clipboard.setData(ClipboardData(text: json));
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(seconds: 6),
+                        content: Text(
+                          res.success
+                              ? '世界书已保存至：${res.path}\n（已同时复制到剪贴板）'
+                              : '保存失败：${res.message}（已复制到剪贴板）',
+                        ),
+                        action: SnackBarAction(
+                          label: '系统分享',
+                          onPressed: () => FileExportService.shareText(
+                            title: '世界书 · ${book.name}',
+                            text: json,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('复制世界书 JSON 到剪贴板'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Clipboard.setData(
+                      ClipboardData(text: book.exportToJson()),
+                    );
+                    if (mounted) _toast('已复制到剪贴板');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded),
+                  title: const Text('删除'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final ok = await _confirm('删除世界书《${book.name}》？');
+                    if (!ok) return;
+                    await WorldBookRepository.delete(book.id);
+                    await _reload();
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('导出 JSON 到剪贴板'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await Clipboard.setData(
-                  ClipboardData(text: book.exportToJson()),
-                );
-                if (mounted) _toast('已复制到剪贴板');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded),
-              title: const Text('删除'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final ok = await _confirm('删除世界书《${book.name}》？');
-                if (!ok) return;
-                await WorldBookRepository.delete(book.id);
-                await _reload();
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -526,37 +602,86 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('导出存档到剪贴板'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                await Clipboard.setData(
-                  ClipboardData(text: SaveService.exportSlot(slot)),
-                );
-                if (mounted) _toast('存档 JSON 已复制到剪贴板');
-              },
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
             ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded),
-              title: const Text('删除这一局'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final ok = await _confirm('删除《${slot.title}》这一局？');
-                if (!ok) return;
-                await SaveService.delete(slot.id);
-                if (_activeSlotId == slot.id) {
-                  await PrefsStore.remove(_kActiveSlot);
-                  _activeSlotId = null;
-                }
-                await _reload();
-              },
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.file_present_rounded),
+                  title: const Text('导出推演存档文件（JSON）'),
+                  subtitle: const Text('保存至下载目录，包含全部世界线与历史幕次'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final json = SaveService.exportSlot(slot);
+                    final ts = FileExportService.formatTimestamp();
+                    final safeTitle =
+                        FileExportService.sanitizeFileName(slot.title);
+                    final fileName = '拟境_推演存档_${safeTitle}_$ts.json';
+                    final res = await FileExportService.exportFile(
+                      fileName: fileName,
+                      content: json,
+                      mimeType: 'application/json',
+                    );
+                    await Clipboard.setData(ClipboardData(text: json));
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(seconds: 6),
+                        content: Text(
+                          res.success
+                              ? '存档已保存至：${res.path}\n（已同时复制到剪贴板）'
+                              : '保存失败：${res.message}（已复制到剪贴板）',
+                        ),
+                        action: SnackBarAction(
+                          label: '系统分享',
+                          onPressed: () => FileExportService.shareText(
+                            title: '推演存档 · ${slot.title}',
+                            text: json,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('复制存档 JSON 到剪贴板'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await Clipboard.setData(
+                      ClipboardData(text: SaveService.exportSlot(slot)),
+                    );
+                    if (mounted) _toast('存档 JSON 已复制到剪贴板');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded),
+                  title: const Text('删除这一局'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final ok = await _confirm('删除《${slot.title}》这一局？');
+                    if (!ok) return;
+                    await SaveService.delete(slot.id);
+                    if (_activeSlotId == slot.id) {
+                      await PrefsStore.remove(_kActiveSlot);
+                      _activeSlotId = null;
+                    }
+                    await _reload();
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -572,124 +697,214 @@ class _HomeShellState extends State<HomeShell> {
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    '本机数据',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface,
-                    ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '本机数据',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      // 数量分开列 —— 回滚备份不是「推演」，
+                      // 混在一起会让用户以为凭空多出了几局。
+                      Text(
+                        '世界书 ${_books.length} 本 · 推演 ${_slots.length} 个'
+                        '${_lineCount > _slots.length ? ' · 世界线 $_lineCount 条' : ''}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        <String>[
+                          if (_blankBooks.isNotEmpty)
+                            '${_blankBooks.length} 本世界书是空白的（创建后没填内容就退出）',
+                          if (_backups.isNotEmpty)
+                            '${_backups.length} 份回滚备份（回滚前自动生成，不计入推演）',
+                          if (_blankBooks.isEmpty && _backups.isEmpty)
+                            '世界书与存档只保存在本机，不会上传。',
+                        ].join('\n'),
+                        style: TextStyle(
+                            fontSize: 11.5, height: 1.6, color: muted),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                  // 数量分开列 —— 回滚备份不是「推演」，
-                  // 混在一起会让用户以为凭空多出了几局。
-                  Text(
-                    '世界书 ${_books.length} 本 · 推演 ${_slots.length} 个'
-                    '${_lineCount > _slots.length ? ' · 世界线 $_lineCount 条' : ''}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: theme.colorScheme.onSurface,
-                    ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.file_present_rounded),
+                  title: const Text('导出全部世界书为文件（JSON）'),
+                  subtitle: Text('共 ${_books.length} 本，保存为单个文件至下载目录'),
+                  enabled: _books.isNotEmpty,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final all = _books
+                        .map((b) => b.exportToJson())
+                        .join('\n\n=====\n\n');
+                    final ts = FileExportService.formatTimestamp();
+                    final fileName = '拟境_全部世界书_${_books.length}本_$ts.json';
+                    final res = await FileExportService.exportFile(
+                      fileName: fileName,
+                      content: all,
+                      mimeType: 'application/json',
+                    );
+                    await Clipboard.setData(ClipboardData(text: all));
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(seconds: 6),
+                        content: Text(
+                          res.success
+                              ? '全部世界书已保存至：${res.path}\n（已同时复制 ${_books.length} 本到剪贴板）'
+                              : '保存失败：${res.message}（已复制到剪贴板）',
+                        ),
+                        action: SnackBarAction(
+                          label: '系统分享',
+                          onPressed: () => FileExportService.shareText(
+                            title: '拟境 · 全部世界书导出',
+                            text: all,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.file_present_rounded),
+                  title: const Text('导出全部推演存档为文件（JSON）'),
+                  subtitle: Text('共 ${_slots.length} 个存档，保存为单个文件至下载目录'),
+                  enabled: _slots.isNotEmpty,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final all = _slots
+                        .map((s) => SaveService.exportSlot(s))
+                        .join('\n\n=====\n\n');
+                    final ts = FileExportService.formatTimestamp();
+                    final fileName = '拟境_全部推演存档_${_slots.length}个_$ts.json';
+                    final res = await FileExportService.exportFile(
+                      fileName: fileName,
+                      content: all,
+                      mimeType: 'application/json',
+                    );
+                    await Clipboard.setData(ClipboardData(text: all));
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        duration: const Duration(seconds: 6),
+                        content: Text(
+                          res.success
+                              ? '全部推演存档已保存至：${res.path}\n（已同时复制 ${_slots.length} 个存档到剪贴板）'
+                              : '保存失败：${res.message}（已复制到剪贴板）',
+                        ),
+                        action: SnackBarAction(
+                          label: '系统分享',
+                          onPressed: () => FileExportService.shareText(
+                            title: '拟境 · 全部推演存档导出',
+                            text: all,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('复制全部世界书到剪贴板'),
+                  enabled: _books.isNotEmpty,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final all = _books
+                        .map((b) => b.exportToJson())
+                        .join('\n\n=====\n\n');
+                    await Clipboard.setData(ClipboardData(text: all));
+                    if (mounted) _toast('已复制 ${_books.length} 本世界书');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.copy_rounded),
+                  title: const Text('复制全部推演存档到剪贴板'),
+                  enabled: _slots.isNotEmpty,
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final all = _slots
+                        .map((s) => SaveService.exportSlot(s))
+                        .join('\n\n=====\n\n');
+                    await Clipboard.setData(ClipboardData(text: all));
+                    if (mounted) _toast('已复制 ${_slots.length} 个推演存档');
+                  },
+                ),
+                if (_blankBooks.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.cleaning_services_outlined),
+                    title: const Text('清理空白世界书'),
+                    subtitle: Text('删除 ${_blankBooks.length} 本没填过内容的世界书'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _purgeBlankBooks();
+                    },
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    <String>[
-                      if (_blankBooks.isNotEmpty)
-                        '${_blankBooks.length} 本世界书是空白的（创建后没填内容就退出）',
-                      if (_backups.isNotEmpty)
-                        '${_backups.length} 份回滚备份（回滚前自动生成，不计入推演）',
-                      if (_blankBooks.isEmpty && _backups.isEmpty)
-                        '世界书与存档只保存在本机，不会上传。',
-                    ].join('\n'),
-                    style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
+                if (_backups.isNotEmpty)
+                  ListTile(
+                    leading: const Icon(Icons.cleaning_services_outlined),
+                    title: const Text('清理回滚备份'),
+                    subtitle: Text('删除 ${_backups.length} 份自动备份，不影响推演进度'),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      final ok = await _confirm(
+                        '删除 ${_backups.length} 份回滚备份？'
+                        '推演进度不受影响，但之后无法再回到回滚前的分支。',
+                      );
+                      if (!ok) return;
+                      final remaining =
+                          (await SaveService.loadAll(includeBackups: true))
+                              .where((s) => !s.isBackup)
+                              .toList();
+                      await SaveService.saveAll(remaining);
+                      await _reload();
+                      if (mounted) _toast('已清理回滚备份');
+                    },
                   ),
-                ],
-              ),
+                ListTile(
+                  leading: const Icon(Icons.delete_sweep_outlined),
+                  title: const Text('清空全部数据'),
+                  subtitle: const Text('世界书、存档、备份、API Key 全部删除，不可恢复'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final ok = await _confirm(
+                      '确定清空全部数据？世界书、存档、备份与 API Key 都会被删除，无法恢复。',
+                    );
+                    if (!ok) return;
+                    await SaveService.saveAll(<SaveSlot>[]);
+                    await WorldBookRepository.saveAll(<WorldBook>[]);
+                    await PrefsStore.remove(_kActiveSlot);
+                    await _reload();
+                    if (mounted) _toast('已清空');
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
             ),
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('导出全部世界书到剪贴板'),
-              enabled: _books.isNotEmpty,
-              onTap: () async {
-                Navigator.pop(ctx);
-                final all = _books
-                    .map((b) => b.exportToJson())
-                    .join('\n\n=====\n\n');
-                await Clipboard.setData(ClipboardData(text: all));
-                if (mounted) _toast('已复制 ${_books.length} 本世界书');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.ios_share_rounded),
-              title: const Text('导出全部推演存档到剪贴板'),
-              enabled: _slots.isNotEmpty,
-              onTap: () async {
-                Navigator.pop(ctx);
-                final all = _slots
-                    .map((s) => SaveService.exportSlot(s))
-                    .join('\n\n=====\n\n');
-                await Clipboard.setData(ClipboardData(text: all));
-                if (mounted) _toast('已复制 ${_slots.length} 个推演存档');
-              },
-            ),
-            if (_blankBooks.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.cleaning_services_outlined),
-                title: const Text('清理空白世界书'),
-                subtitle: Text('删除 ${_blankBooks.length} 本没填过内容的世界书'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _purgeBlankBooks();
-                },
-              ),
-            if (_backups.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.cleaning_services_outlined),
-                title: const Text('清理回滚备份'),
-                subtitle: Text('删除 ${_backups.length} 份自动备份，不影响推演进度'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final ok = await _confirm(
-                    '删除 ${_backups.length} 份回滚备份？'
-                    '推演进度不受影响，但之后无法再回到回滚前的分支。',
-                  );
-                  if (!ok) return;
-                  final remaining =
-                      (await SaveService.loadAll(includeBackups: true))
-                          .where((s) => !s.isBackup)
-                          .toList();
-                  await SaveService.saveAll(remaining);
-                  await _reload();
-                  if (mounted) _toast('已清理回滚备份');
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.delete_sweep_outlined),
-              title: const Text('清空全部数据'),
-              subtitle: const Text('世界书、存档、备份、API Key 全部删除，不可恢复'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final ok = await _confirm(
-                  '确定清空全部数据？世界书、存档、备份与 API Key 都会被删除，无法恢复。',
-                );
-                if (!ok) return;
-                await SaveService.saveAll(<SaveSlot>[]);
-                await WorldBookRepository.saveAll(<WorldBook>[]);
-                await PrefsStore.remove(_kActiveSlot);
-                await _reload();
-                if (mounted) _toast('已清空');
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );

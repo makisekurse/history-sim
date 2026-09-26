@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/world_book_repository.dart';
 import '../../models/world_book.dart';
+import '../../services/file_export_service.dart';
 
 /// 世界书编辑器。
 ///
@@ -107,11 +108,35 @@ class _WorldBookEditorScreenState extends State<WorldBookEditorScreen> {
   }
 
   Future<void> _export() async {
-    final json = _collect().exportToJson();
+    final book = _collect();
+    final json = book.exportToJson();
+    final ts = FileExportService.formatTimestamp();
+    final safeName = FileExportService.sanitizeFileName(book.name);
+    final fileName = '拟境_世界书_${safeName}_$ts.json';
+
+    final res = await FileExportService.exportFile(
+      fileName: fileName,
+      content: json,
+      mimeType: 'application/json',
+    );
     await Clipboard.setData(ClipboardData(text: json));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('世界书 JSON 已复制到剪贴板，可直接分享。')),
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          res.success
+              ? '世界书已保存至：${res.path}\n（已同时复制到剪贴板）'
+              : '保存失败：${res.message}（已复制到剪贴板）',
+        ),
+        action: SnackBarAction(
+          label: '系统分享',
+          onPressed: () => FileExportService.shareText(
+            title: '世界书 · ${book.name}',
+            text: json,
+          ),
+        ),
+      ),
     );
   }
 

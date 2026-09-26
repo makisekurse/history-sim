@@ -88,6 +88,9 @@ class ThoughtSheet extends StatelessWidget {
                     border: Border.all(color: palette.rule),
                   ),
                   child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
                     child: SelectableText(
                       thought.trim(),
                       style: TextStyle(
