@@ -778,6 +778,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -795,9 +796,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 const SizedBox(height: 14),
                 Flexible(
                   child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
+                    physics: const ClampingScrollPhysics(),
                     child: s.isEmpty
                         ? Text(
                             '还没有世界状态。\n推演一幕之后，这里会记录此刻的时间、'
@@ -876,15 +875,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -1006,15 +1004,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: Column(
@@ -1165,15 +1162,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1242,6 +1238,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -1269,9 +1266,7 @@ class _ReaderScreenState extends State<ReaderScreen>
               Flexible(
                 child: ListView.builder(
                   shrinkWrap: true,
-                  physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics(),
-                  ),
+                  physics: const ClampingScrollPhysics(),
                   itemCount: _history.length,
                   itemBuilder: (_, i) {
                     final node = _history[i];
@@ -1508,15 +1503,14 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -1674,6 +1668,7 @@ class _ReaderScreenState extends State<ReaderScreen>
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -1715,9 +1710,7 @@ class _ReaderScreenState extends State<ReaderScreen>
                 const SizedBox(height: 8),
                 Flexible(
                   child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
+                    physics: const ClampingScrollPhysics(),
                     child: SelectableText(
                       chapter.rawOutput,
                       style: TextStyle(

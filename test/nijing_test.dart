@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nijing/models/annotation.dart';
@@ -10,6 +11,7 @@ import 'package:nijing/models/world_state.dart';
 import 'package:nijing/services/file_export_service.dart';
 import 'package:nijing/services/game_session.dart';
 import 'package:nijing/services/response_parser.dart';
+import 'package:nijing/services/save_service.dart';
 import 'package:nijing/services/story_export_service.dart';
 import 'package:nijing/services/text_layout.dart';
 import 'package:nijing/services/wakelock_service.dart';
@@ -1290,10 +1292,33 @@ facts: 甲; 乙
       expect(FileExportService.sanitizeFileName('大唐:开元/盛世*测试?'), '大唐_开元_盛世_测试_');
       expect(FileExportService.sanitizeFileName(''), '未命名');
       expect(FileExportService.sanitizeFileName('   '), '未命名');
+      expect(FileExportService.sanitizeFileName('测试文件...  '), '测试文件');
       expect(FileExportService.sanitizeFileName('a' * 100).length, 50);
 
       final ts = FileExportService.formatTimestamp(DateTime(2026, 9, 26, 22, 0, 5));
       expect(ts, '20260926_220005');
+    });
+
+    test('WorldBook 与 SaveSlot 支持 JSON 数组格式安全导入', () {
+      // 1. WorldBook 数组导入
+      const bookArr = '[{"name":"世界1","worldview":"设定1"},{"name":"世界2","worldview":"设定2"}]';
+      final b = WorldBook.fromImportText(bookArr);
+      expect(b.name, '世界1');
+      expect(b.worldview, '设定1');
+
+      // 2. SaveSlot 数组导入
+      final slot1 = SaveSlot(id: 's1', title: '档1', worldBook: WorldBook(id: 'w1', name: '书1'));
+      final slot2 = SaveSlot(id: 's2', title: '档2', worldBook: WorldBook(id: 'w2', name: '书2'));
+      final slotsJson = jsonEncode([slot1.toJson(), slot2.toJson()]);
+      final s = SaveService.importSlot(slotsJson);
+      expect(s.id, 's1');
+      expect(s.title, '档1');
+
+      // 3. 批量导出的 JSON 必须是合法 JSON 数组
+      final booksJson = jsonEncode([b.toJson()]);
+      final decodedList = jsonDecode(booksJson);
+      expect(decodedList, isA<List>());
+      expect((decodedList as List).length, 1);
     });
 
     test('物理文件落盘与内容精确读回（Markdown / TXT / JSON）', () async {

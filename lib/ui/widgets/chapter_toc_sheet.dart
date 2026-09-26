@@ -28,6 +28,7 @@ class ChapterTocSheet extends StatelessWidget {
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => ChapterTocSheet(
         history: history,
         onSelectChapter: onSelectChapter,
@@ -82,9 +83,7 @@ class ChapterTocSheet extends StatelessWidget {
                     )
                   : ListView.separated(
                       shrinkWrap: true,
-                      physics: const BouncingScrollPhysics(
-                        parent: AlwaysScrollableScrollPhysics(),
-                      ),
+                      physics: const ClampingScrollPhysics(),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       itemCount: history.length,
                       separatorBuilder: (_, _) => Divider(

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -200,6 +202,7 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -207,9 +210,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           child: ListView(
             shrinkWrap: true,
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             children: <Widget>[
               const Padding(
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 10),
@@ -245,11 +246,10 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+          physics: const ClampingScrollPhysics(),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -321,11 +321,10 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(
-            parent: AlwaysScrollableScrollPhysics(),
-          ),
+          physics: const ClampingScrollPhysics(),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -486,15 +485,14 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -603,15 +601,14 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -698,15 +695,14 @@ class _HomeShellState extends State<HomeShell> {
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
+            physics: const ClampingScrollPhysics(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -757,17 +753,16 @@ class _HomeShellState extends State<HomeShell> {
                   enabled: _books.isNotEmpty,
                   onTap: () async {
                     Navigator.pop(ctx);
-                    final all = _books
-                        .map((b) => b.exportToJson())
-                        .join('\n\n=====\n\n');
+                    final jsonContent = const JsonEncoder.withIndent('  ')
+                        .convert(_books.map((b) => b.toJson()).toList());
                     final ts = FileExportService.formatTimestamp();
                     final fileName = '拟境_全部世界书_${_books.length}本_$ts.json';
                     final res = await FileExportService.exportFile(
                       fileName: fileName,
-                      content: all,
+                      content: jsonContent,
                       mimeType: 'application/json',
                     );
-                    await Clipboard.setData(ClipboardData(text: all));
+                    await Clipboard.setData(ClipboardData(text: jsonContent));
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -781,7 +776,7 @@ class _HomeShellState extends State<HomeShell> {
                           label: '系统分享',
                           onPressed: () => FileExportService.shareText(
                             title: '拟境 · 全部世界书导出',
-                            text: all,
+                            text: jsonContent,
                           ),
                         ),
                       ),
@@ -795,17 +790,16 @@ class _HomeShellState extends State<HomeShell> {
                   enabled: _slots.isNotEmpty,
                   onTap: () async {
                     Navigator.pop(ctx);
-                    final all = _slots
-                        .map((s) => SaveService.exportSlot(s))
-                        .join('\n\n=====\n\n');
+                    final jsonContent = const JsonEncoder.withIndent('  ')
+                        .convert(_slots.map((s) => s.toJson()).toList());
                     final ts = FileExportService.formatTimestamp();
                     final fileName = '拟境_全部推演存档_${_slots.length}个_$ts.json';
                     final res = await FileExportService.exportFile(
                       fileName: fileName,
-                      content: all,
+                      content: jsonContent,
                       mimeType: 'application/json',
                     );
-                    await Clipboard.setData(ClipboardData(text: all));
+                    await Clipboard.setData(ClipboardData(text: jsonContent));
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -819,7 +813,7 @@ class _HomeShellState extends State<HomeShell> {
                           label: '系统分享',
                           onPressed: () => FileExportService.shareText(
                             title: '拟境 · 全部推演存档导出',
-                            text: all,
+                            text: jsonContent,
                           ),
                         ),
                       ),

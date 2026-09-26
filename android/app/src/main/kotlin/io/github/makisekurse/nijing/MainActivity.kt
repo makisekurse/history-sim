@@ -53,7 +53,12 @@ class MainActivity : FlutterActivity() {
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             this.type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, title)
-                            putExtra(Intent.EXTRA_TEXT, text)
+                            val shareContent = if (text.length > 100000) {
+                                text.substring(0, 100000) + "\n\n(已保存至文件，超出文本分享上限，完整内容请在 Download/nijing/ 查看)"
+                            } else {
+                                text
+                            }
+                            putExtra(Intent.EXTRA_TEXT, shareContent)
                         }
                         val chooser = Intent.createChooser(intent, title)
                         startActivity(chooser)
@@ -81,7 +86,20 @@ class MainActivity : FlutterActivity() {
                     contentResolver.openOutputStream(uri)?.use { os ->
                         os.write(content.toByteArray(Charsets.UTF_8))
                     }
-                    return "/storage/emulated/0/Download/nijing/$fileName"
+                    var actualName = fileName
+                    try {
+                        contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                                if (nameIdx >= 0) {
+                                    actualName = cursor.getString(nameIdx) ?: fileName
+                                }
+                            }
+                        }
+                    } catch (_: Throwable) {
+                        // ignore query error
+                    }
+                    return "/storage/emulated/0/Download/nijing/$actualName"
                 }
             } catch (_: Throwable) {
                 // Fallback to direct file system

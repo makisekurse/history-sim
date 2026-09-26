@@ -59,10 +59,11 @@ class AnnotationSheet {
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.62,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
@@ -91,9 +92,7 @@ class AnnotationSheet {
                         )
                       : ListView(
                           shrinkWrap: true,
-                          physics: const BouncingScrollPhysics(
-                            parent: AlwaysScrollableScrollPhysics(),
-                          ),
+                          physics: const ClampingScrollPhysics(),
                           children: children,
                         ),
                 ),

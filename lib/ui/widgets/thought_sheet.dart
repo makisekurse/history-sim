@@ -25,6 +25,7 @@ class ThoughtSheet extends StatelessWidget {
       backgroundColor: theme.scaffoldBackgroundColor,
       showDragHandle: true,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) => ThoughtSheet(
         title: title,
         thought: thought,
@@ -39,7 +40,7 @@ class ThoughtSheet extends StatelessWidget {
     return SafeArea(
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.75,
+          maxHeight: MediaQuery.of(context).size.height * 0.85,
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -88,9 +89,7 @@ class ThoughtSheet extends StatelessWidget {
                     border: Border.all(color: palette.rule),
                   ),
                   child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(
-                      parent: AlwaysScrollableScrollPhysics(),
-                    ),
+                    physics: const ClampingScrollPhysics(),
                     child: SelectableText(
                       thought.trim(),
                       style: TextStyle(

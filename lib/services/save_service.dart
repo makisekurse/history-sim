@@ -89,6 +89,12 @@ class SaveService {
   /// 从 JSON 文本导入一个存档。
   static SaveSlot importSlot(String raw) {
     final decoded = jsonDecode(raw);
+    if (decoded is List && decoded.isNotEmpty) {
+      final first = decoded.first;
+      if (first is Map) {
+        return SaveSlot.fromJson(Map<String, dynamic>.from(first));
+      }
+    }
     if (decoded is! Map) throw const FormatException('存档格式不正确');
     return SaveSlot.fromJson(Map<String, dynamic>.from(decoded));
   }

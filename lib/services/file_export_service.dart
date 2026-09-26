@@ -36,6 +36,7 @@ class FileExportService {
   /// 过滤文件名中的非法字符，避免在各种文件系统上报错
   static String sanitizeFileName(String name) {
     var safe = name.replaceAll(RegExp(r'[\\/:*?"<>|\r\n\t]'), '_').trim();
+    safe = safe.replaceAll(RegExp(r'[. ]+$'), '');
     if (safe.isEmpty) safe = '未命名';
     if (safe.length > 50) safe = safe.substring(0, 50);
     return safe;

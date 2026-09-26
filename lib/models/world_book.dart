@@ -169,10 +169,19 @@ class WorldBook {
       throw const FormatException('导入内容为空');
     }
 
-    final looksJson = text.startsWith('{') && text.endsWith('}');
+    final looksJson = (text.startsWith('{') && text.endsWith('}')) ||
+        (text.startsWith('[') && text.endsWith(']'));
     if (looksJson) {
       try {
         final decoded = jsonDecode(text);
+        if (decoded is List && decoded.isNotEmpty) {
+          final first = decoded.first;
+          if (first is Map) {
+            return WorldBook.fromJson(
+              _normalizeKeys(Map<String, dynamic>.from(first)),
+            );
+          }
+        }
         if (decoded is Map<String, dynamic>) {
           return WorldBook.fromJson(_normalizeKeys(decoded));
         }
