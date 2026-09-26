@@ -15,6 +15,9 @@ class ParsedChapter {
   /// `<state>` 块的原文，交给 WorldState 服务去解析。
   final String stateRaw;
 
+  /// 模型生成的思维链 / 推演思考内容（`<think>` 或 `<thought>` 块）。
+  final String thought;
+
   /// 模型返回的**原始文本**（未做任何清洗），仅用于排障。
   final String rawOutput;
 
@@ -25,6 +28,7 @@ class ParsedChapter {
     this.glossary = const <GlossaryEntry>[],
     this.cast = const <CastEntry>[],
     this.stateRaw = '',
+    this.thought = '',
     this.rawOutput = '',
   });
 
@@ -47,7 +51,7 @@ class ParsedChapter {
 ///   ↓
 /// 结构块切分（找不到闭合标签就吃到文末）
 ///   ↓
-/// 结构化提取（date / choices / glossary / cast / state）
+/// 结构化提取（date / choices / glossary / cast / state / think）
 ///   ↓
 /// 正文重建（按位置剔除结构块跨度，其余原样保留）
 /// ```
@@ -64,9 +68,11 @@ class ResponseParser {
     'glossary',
     'cast',
     'state',
+    'think',
+    'thought',
   ];
 
-  static const String _tagAlt = '(date|choices|glossary|cast|state)';
+  static const String _tagAlt = '(date|choices|glossary|cast|state|think|thought)';
 
   /// 宽容的开标签：`<cast>` `< cast >` `＜cast＞` `《cast》` `<Cast>`
   static final RegExp _openTag = RegExp(
@@ -93,6 +99,7 @@ class ResponseParser {
     final cast = <CastEntry>[];
     var date = '';
     var stateRaw = '';
+    var thought = '';
 
     for (final b in blocks) {
       switch (b.tag) {
@@ -119,6 +126,13 @@ class ResponseParser {
         case 'state':
           stateRaw = b.inner.trim();
           break;
+        case 'think':
+        case 'thought':
+          final t = b.inner.trim();
+          if (t.isNotEmpty) {
+            thought = thought.isEmpty ? t : '$thought\n\n$t';
+          }
+          break;
       }
     }
 
@@ -129,6 +143,7 @@ class ResponseParser {
       glossary: glossary,
       cast: cast,
       stateRaw: stateRaw,
+      thought: thought,
       rawOutput: raw,
     );
   }

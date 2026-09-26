@@ -36,6 +36,11 @@ class ChapterNode {
   /// 任意历史幕的（顶层存的永远是最新的那份）。
   final WorldState? worldStateAfter;
 
+  /// 模型生成的思维链 / 推演思考过程（`<think>` 或 `<thought>`）。
+  ///
+  /// 正文阅读时完全隔离，读者可在面板中随时折叠查阅。
+  final String thought;
+
   ChapterNode({
     required this.chapterIndex,
     required this.title,
@@ -48,6 +53,7 @@ class ChapterNode {
     this.rawOutput = '',
     this.chronicleAfter,
     this.worldStateAfter,
+    this.thought = '',
     DateTime? timestamp,
   })  : choices = choices ?? <String>[],
         glossary = glossary ?? <GlossaryEntry>[],
@@ -66,6 +72,7 @@ class ChapterNode {
         'rawOutput': _capped(rawOutput),
         'chronicleAfter': chronicleAfter,
         'worldStateAfter': worldStateAfter?.toJson(),
+        'thought': _capped(thought),
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -96,6 +103,7 @@ class ChapterNode {
                 Map<String, dynamic>.from(json['worldStateAfter'] as Map),
               )
             : null,
+        thought: (json['thought'] ?? '').toString(),
         timestamp: DateTime.tryParse((json['timestamp'] ?? '').toString()),
       );
 
@@ -105,6 +113,7 @@ class ChapterNode {
     String? date,
     String? chronicleAfter,
     WorldState? worldStateAfter,
+    String? thought,
   }) =>
       ChapterNode(
         chapterIndex: chapterIndex,
@@ -118,6 +127,7 @@ class ChapterNode {
         rawOutput: rawOutput,
         chronicleAfter: chronicleAfter ?? this.chronicleAfter,
         worldStateAfter: worldStateAfter ?? this.worldStateAfter,
+        thought: thought ?? this.thought,
         timestamp: timestamp,
       );
 

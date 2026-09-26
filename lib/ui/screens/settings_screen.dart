@@ -482,6 +482,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _config.autoHideHeader,
           (v) => _apply(_config.copyWith(autoHideHeader: v), immediate: true),
         ),
+        _switchRow(
+          theme,
+          '阅读防熄屏',
+          '沉浸推演阅读时保持屏幕常亮，退出或切后台释放',
+          _config.keepScreenOn,
+          (v) => _apply(_config.copyWith(keepScreenOn: v), immediate: true),
+        ),
       ];
 
   // ---------- 组件 ----------

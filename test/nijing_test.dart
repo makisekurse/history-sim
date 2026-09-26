@@ -1,12 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nijing/models/annotation.dart';
+import 'package:nijing/models/app_config.dart';
 import 'package:nijing/models/chapter_node.dart';
 import 'package:nijing/models/save_slot.dart';
 import 'package:nijing/models/world_book.dart';
+import 'package:nijing/models/world_line.dart';
 import 'package:nijing/models/world_state.dart';
 import 'package:nijing/services/game_session.dart';
 import 'package:nijing/services/response_parser.dart';
+import 'package:nijing/services/story_export_service.dart';
 import 'package:nijing/services/text_layout.dart';
+import 'package:nijing/services/wakelock_service.dart';
 import 'package:nijing/services/world_state_service.dart';
 
 void main() {
@@ -968,4 +972,222 @@ facts: 甲; 乙
       expect(s.events, isEmpty);
     });
   });
+
+  group('ResponseParser · think 与 thought 思维链隔离与提取', () {
+    test('标准 <think> 标签抽取思考并保持正文纯净', () {
+      const raw = '''
+<think>
+当前局势危急，需要权衡利弊。
+决定让主角前往茶馆接头。
+</think>
+
+<date>1949年11月1日</date>
+
+秋风肃杀，林怀民裹紧了大衣，快步走向转角的茶馆。
+
+<choices>
+1. 推门而入
+2. 在门外稍作观察
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.thought, contains('当前局势危急'));
+      expect(p.thought, contains('决定让主角前往茶馆接头'));
+      expect(p.body, contains('秋风肃杀'));
+      expect(p.body, isNot(contains('<think>')));
+      expect(p.body, isNot(contains('当前局势危急')));
+      expect(p.date, '1949年11月1日');
+      expect(p.choices.length, 2);
+    });
+
+    test('变体 <thought> 标签也能正常识别', () {
+      const raw = '''
+<thought>
+深入分析各方势力。
+</thought>
+夜色渐深，灯火阑珊。
+<choices>
+1. 歇息
+2. 巡视
+</choices>
+''';
+      final p = ResponseParser.parse(raw);
+      expect(p.thought, '深入分析各方势力。');
+      expect(p.body, '夜色渐深，灯火阑珊。');
+      expect(p.body, isNot(contains('深入分析')));
+    });
+
+    test('未闭合的 <think> 在流式预览中隐藏', () {
+      const raw = '''
+天色微明。
+<think>
+正在推演下一步逻辑，尚未结束…
+''';
+      final preview = ResponseParser.stripForPreview(raw);
+      expect(preview, '天色微明。');
+      expect(preview, isNot(contains('正在推演')));
+    });
+
+    test('流式中正在流入的半截 think 标签不闪烁', () {
+      expect(ResponseParser.stripForPreview('晨光初照。<th'), '晨光初照。');
+      expect(ResponseParser.stripForPreview('晨光初照。<think'), '晨光初照。');
+      expect(ResponseParser.stripForPreview('晨光初照。</think'), '晨光初照。');
+    });
+  });
+
+  group('ChapterNode · thought 思维链字段与序列化', () {
+    test('JSON 序列化往返保留 thought', () {
+      final node = ChapterNode(
+        chapterIndex: 1,
+        title: '第一幕',
+        content: '正文内容',
+        thought: '思考过程记录',
+      );
+      final json = node.toJson();
+      expect(json['thought'], '思考过程记录');
+
+      final restored = ChapterNode.fromJson(json);
+      expect(restored.thought, '思考过程记录');
+      expect(restored.content, '正文内容');
+    });
+
+    test('copyWith 正确复制与修改 thought', () {
+      final node = ChapterNode(
+        chapterIndex: 1,
+        title: '第一幕',
+        content: '正文',
+        thought: '旧思考',
+      );
+      final copied = node.copyWith(thought: '新思考');
+      expect(copied.thought, '新思考');
+      expect(copied.content, '正文');
+    });
+  });
+
+  group('GameSession · 错字就地微调', () {
+    test('editChapterContent 仅修改正文，快照与三位一体不变量完好', () {
+      final slot = SaveSlot(
+        id: 'slot_typo',
+        title: '错字测试',
+        worldBook: WorldBook(id: 'wb1', name: '测试'),
+      );
+      final session = GameSession(slot);
+      session.appendChapter(
+        content: '原先有错别字的正文',
+        playerAction: '行动A',
+        date: '1949年',
+        choices: <String>['选项1', '选项2'],
+        glossary: <GlossaryEntry>[],
+        cast: <CastEntry>[],
+        rawOutput: 'raw',
+        stateRaw: '时间：1949年\n地点：北平',
+        thought: '思考记录',
+      );
+
+      final stateBefore = session.worldState.copy();
+      final chronicleBefore = session.chronicle;
+      final nodeBefore = session.history.first;
+
+      session.editChapterContent(0, '修正错别字之后的完美正文');
+
+      final nodeAfter = session.history.first;
+      expect(nodeAfter.content, '修正错别字之后的完美正文');
+      expect(nodeAfter.playerAction, nodeBefore.playerAction);
+      expect(nodeAfter.date, nodeBefore.date);
+      expect(nodeAfter.thought, '思考记录');
+      expect(nodeAfter.worldStateAfter?.location, '北平');
+      expect(nodeAfter.chronicleAfter, chronicleBefore);
+      expect(session.worldState.location, stateBefore.location);
+    });
+  });
+
+  group('StoryExportService · 推演故事排版导出', () {
+    final book = WorldBook(
+      id: 'b1',
+      name: '谍战风云',
+      era: '1949年秋',
+      playerRole: '潜伏特工',
+    );
+    final line = WorldLine(id: 'l1', name: '主线');
+    final history = <ChapterNode>[
+      ChapterNode(
+        chapterIndex: 1,
+        title: '第一幕',
+        date: '1949年10月1日',
+        content: '清晨的薄雾笼罩着街道。\n他推开窗户，看着远方的旗帜。',
+      ),
+      ChapterNode(
+        chapterIndex: 2,
+        title: '第二幕',
+        date: '1949年10月2日',
+        playerAction: '秘密联络联络员',
+        content: '茶馆里人声鼎沸，切口顺利对上。',
+      ),
+    ];
+    final worldState = WorldState(
+      time: '1949年10月2日',
+      location: '北平前门',
+      facts: <String>['已取得信任'],
+    );
+
+    test('toMarkdown 导出结构完整包含题头、幕次、抉择与状态', () {
+      final md = StoryExportService.toMarkdown(
+        book: book,
+        line: line,
+        history: history,
+        chronicle: '1949年10月：北平解放。',
+        worldState: worldState,
+      );
+
+      expect(md, contains('# 谍战风云'));
+      expect(md, contains('> 时代背景：1949年秋'));
+      expect(md, contains('> 扮演角色：潜伏特工'));
+      expect(md, contains('## 第一幕 · 1949年10月1日'));
+      expect(md, contains('> **【你的抉择】** 秘密联络联络员'));
+      expect(md, contains('茶馆里人声鼎沸'));
+      expect(md, contains('## 编年史大事记'));
+      expect(md, contains('北平解放'));
+      expect(md, contains('## 当前世界观察局势'));
+      expect(md, contains('北平前门'));
+    });
+
+    test('toPlainText 纯文本小说排版带全角缩进与分段', () {
+      final txt = StoryExportService.toPlainText(
+        book: book,
+        line: line,
+        history: history,
+        chronicle: '1949年10月：北平解放。',
+        worldState: worldState,
+      );
+
+      expect(txt, contains('《谍战风云》'));
+      expect(txt, contains('第一幕 · 1949年10月1日'));
+      expect(txt, contains('　　清晨的薄雾笼罩着街道。'));
+      expect(txt, contains('【你的抉择】秘密联络联络员'));
+      expect(txt, contains('【编年史大事记】'));
+      expect(txt, contains('【当前世界观察局势】'));
+    });
+  });
+
+  group('AppConfig & WakelockService · 阅读常亮', () {
+    test('keepScreenOn 默认开启并支持 JSON 序列化', () {
+      final cfg = AppConfig();
+      expect(cfg.keepScreenOn, isTrue);
+
+      final json = cfg.toJson();
+      expect(json['keepScreenOn'], isTrue);
+
+      final restored = AppConfig.fromJson(json);
+      expect(restored.keepScreenOn, isTrue);
+
+      final updated = cfg.copyWith(keepScreenOn: false);
+      expect(updated.keepScreenOn, isFalse);
+    });
+
+    test('WakelockService 调用安全不崩溃', () async {
+      await WakelockService.enable();
+      await WakelockService.disable();
+    });
+  });
 }
+

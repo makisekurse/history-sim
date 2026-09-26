@@ -45,6 +45,9 @@ class AppConfig {
   /// 顶栏自动隐藏（零 HUD）
   bool autoHideHeader;
 
+  /// 阅读防熄屏（保持屏幕常亮）
+  bool keepScreenOn;
+
   AppConfig({
     this.apiProvider = 'bailian',
     this.baseUrl = '',
@@ -58,6 +61,7 @@ class AppConfig {
     this.paragraphSpacing = 'normal',
     this.autoScrollToLatest = true,
     this.autoHideHeader = true,
+    this.keepScreenOn = true,
   });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -73,6 +77,7 @@ class AppConfig {
         'paragraphSpacing': paragraphSpacing,
         'autoScrollToLatest': autoScrollToLatest,
         'autoHideHeader': autoHideHeader,
+        'keepScreenOn': keepScreenOn,
       };
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -90,6 +95,7 @@ class AppConfig {
         paragraphSpacing: (json['paragraphSpacing'] ?? 'normal').toString(),
         autoScrollToLatest: json['autoScrollToLatest'] != false,
         autoHideHeader: json['autoHideHeader'] != false,
+        keepScreenOn: json['keepScreenOn'] != false,
       );
 
   AppConfig copyWith({
@@ -105,6 +111,7 @@ class AppConfig {
     String? paragraphSpacing,
     bool? autoScrollToLatest,
     bool? autoHideHeader,
+    bool? keepScreenOn,
   }) =>
       AppConfig(
         apiProvider: apiProvider ?? this.apiProvider,
@@ -119,6 +126,7 @@ class AppConfig {
         paragraphSpacing: paragraphSpacing ?? this.paragraphSpacing,
         autoScrollToLatest: autoScrollToLatest ?? this.autoScrollToLatest,
         autoHideHeader: autoHideHeader ?? this.autoHideHeader,
+        keepScreenOn: keepScreenOn ?? this.keepScreenOn,
       );
 
   String encode() => jsonEncode(toJson());

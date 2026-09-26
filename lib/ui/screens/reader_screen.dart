@@ -16,19 +16,24 @@ import '../../services/game_session.dart';
 import '../../services/llm_client.dart';
 import '../../services/response_parser.dart';
 import '../../services/save_service.dart';
+import '../../services/story_export_service.dart';
 import '../../services/text_layout.dart';
+import '../../services/wakelock_service.dart';
 import '../../services/world_state_service.dart';
 import '../themes/app_theme.dart';
+import '../widgets/chapter_toc_sheet.dart';
 import '../widgets/choice_pill.dart';
 import '../widgets/free_input_bar.dart';
 import '../widgets/glossary_sheet.dart';
+import '../widgets/thought_sheet.dart';
+import '../widgets/world_line_tree.dart';
 import 'cast_screen.dart';
 import 'chronicle_screen.dart';
 import 'settings_screen.dart';
 
 /// 沉浸式阅读主视口。
 ///
-/// 零 HUD：顶栏默认隐藏，轻触屏幕中央淡入、3 秒无操作淡出。
+/// 零 HUD：顶栏默认隐藏，轻触屏幕中央淡入、再次轻触或 3 秒无操作淡出。
 /// 界面上**没有任何写死的剧本信息**，全部来自当前世界书。
 class ReaderScreen extends StatefulWidget {
   final AppConfig config;
@@ -46,7 +51,8 @@ class ReaderScreen extends StatefulWidget {
   State<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends State<ReaderScreen> {
+class _ReaderScreenState extends State<ReaderScreen>
+    with WidgetsBindingObserver {
   final ScrollController _scroll = ScrollController();
   final LlmClient _client = LlmClient();
 
@@ -71,26 +77,51 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _headerVisible = true;
   Timer? _headerTimer;
 
+  final Map<int, GlobalKey> _chapterKeys = <int, GlobalKey>{};
+  GlobalKey _chapterKeyFor(int index) =>
+      _chapterKeys.putIfAbsent(index, () => GlobalKey());
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _config = widget.config;
     _slot = widget.slot;
     _session = GameSession(_slot);
     _scroll.addListener(_onScroll);
     _enterImmersive();
     _scheduleHeaderHide();
+    _applyWakelock();
     _loadApiKey();
     _maybeJumpToLatest();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    WakelockService.disable();
     _headerTimer?.cancel();
     _client.cancel();
     _scroll.dispose();
     _exitImmersive();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _applyWakelock();
+    } else {
+      WakelockService.disable();
+    }
+  }
+
+  void _applyWakelock() {
+    if (_config.keepScreenOn) {
+      WakelockService.enable();
+    } else {
+      WakelockService.disable();
+    }
   }
 
   // ---------- 沉浸模式 ----------
@@ -118,28 +149,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
     });
   }
 
-  /// 单击唤出顶栏 —— **只显示，不切换**。
-  ///
-  /// 之前是 toggle，导致「想唤出结果反而关掉了」，体感很怪。
-  /// 现在单击一律显示并重置自动隐藏计时；隐藏交给 3 秒定时器。
-  void _showHeader() {
-    if (!_headerVisible) {
+  /// 单击切换顶栏：
+  /// - 未显示时单击屏幕显示顶栏（并启动 3 秒自动隐藏计时）；
+  /// - 顶栏已显示时再次单击屏幕立即隐藏顶栏（并取消计时）。
+  void _toggleHeader() {
+    if (_headerVisible) {
+      _headerTimer?.cancel();
+      setState(() => _headerVisible = false);
+    } else {
       setState(() => _headerVisible = true);
+      _scheduleHeaderHide();
     }
-    _scheduleHeaderHide();
   }
-
-  /// 最新一幕的锚点。跳转用它而不是 `maxScrollExtent`。
-  final GlobalKey _latestKey = GlobalKey();
 
   /// 打开推演时跳到最新一幕。
   ///
   /// 「继续进入」的语义就是**接着上次的进度往下** —— 默认停在第一幕的话，
   /// 用户得手动翻到底，等于每次进来都要重新找位置。
-  ///
-  /// ⚠️ 不用 `jumpTo(maxScrollExtent)` 一步到位：ListView 是懒加载的，
-  /// 首帧之后 `maxScrollExtent` 只反映**已经铺出来**的那部分，直接跳会落在半路。
-  /// 所以先 `ensureVisible` 定位到最后一幕，下一帧再补一次到底。
   void _maybeJumpToLatest() {
     if (!_config.autoScrollToLatest) return;
     if (_history.isEmpty) return;
@@ -148,8 +174,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   /// 跳到最新一幕。切换世界线后也走这里。
   void _jumpToLatest() {
+    if (_history.isEmpty) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ctx = _latestKey.currentContext;
+      final ctx = _chapterKeyFor(_history.length - 1).currentContext;
       if (ctx != null) {
         _atBottom = true;
         Scrollable.ensureVisible(ctx, duration: Duration.zero, alignment: 1);
@@ -160,6 +187,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       });
     });
+  }
+
+  /// 精准平滑跳转定位到指定幕。
+  void _jumpToChapter(int index) {
+    if (index < 0 || index >= _history.length) return;
+    final ctx = _chapterKeyFor(index).currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeInOut,
+        alignment: 0.05,
+      );
+    }
   }
 
   // ---------- 原始指针：区分「单击」与「划选」 ----------
@@ -192,7 +233,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _pointerDown = null;
     _pointerMoved = false;
     if (wasDrag) return;
-    _showHeader();
+    _toggleHeader();
   }
 
   // ---------- 滚动跟随 ----------
@@ -292,6 +333,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           cast: p.cast,
           rawOutput: p.rawOutput,
           stateRaw: p.stateRaw,
+          thought: p.thought,
         );
         _live = '';
         _pendingAction = '';
@@ -491,15 +533,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     onPointerDown: _onPointerDown,
                     onPointerMove: _onPointerMove,
                     onPointerUp: _onPointerUp,
-                    child: ListView(
-                      controller: _scroll,
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                      children: <Widget>[
-                        // 阅读区整体可长按选中复制。
-                        // ⚠️ 选择胶囊与输入框必须留在 SelectionArea **外面**，
-                        // 否则选中手势会和按钮点击打架。
-                        SelectionArea(
-                          child: Column(
+                    child: SelectionArea(
+                      child: ListView(
+                        controller: _scroll,
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                        children: <Widget>[
+                          Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: <Widget>[
                               _frontispiece(theme),
@@ -509,57 +551,62 @@ class _ReaderScreenState extends State<ReaderScreen> {
                                   _history[i],
                                   fontSize,
                                   i,
-                                  anchorKey: i == _history.length - 1
-                                      ? _latestKey
-                                      : null,
+                                  anchorKey: _chapterKeyFor(i),
                                 ),
                               if (_busy) _liveView(theme, fontSize),
                               if (_notice.isNotEmpty) _noticeView(theme),
                             ],
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        if (!_busy) ...<Widget>[
-                          if (_history.isEmpty && _choices.isEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: () => _act(''),
-                                  icon: const Icon(Icons.auto_stories_rounded,
-                                      size: 18),
-                                  label: const Text('开始推演'),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor:
-                                        theme.colorScheme.primary,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
+                          const SizedBox(height: 16),
+                          SelectionContainer.disabled(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                if (!_busy) ...<Widget>[
+                                  if (_history.isEmpty && _choices.isEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 12),
+                                      child: SizedBox(
+                                        width: double.infinity,
+                                        child: FilledButton.icon(
+                                          onPressed: () => _act(''),
+                                          icon: const Icon(Icons.auto_stories_rounded,
+                                              size: 18),
+                                          label: const Text('开始推演'),
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor:
+                                                theme.colorScheme.primary,
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 14),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  for (var i = 0; i < _choices.length; i++)
+                                    ChoicePill(
+                                      index: i + 1,
+                                      text: _choices[i],
+                                      enabled: !_busy,
+                                      onTap: () => _act(_choices[i]),
+                                    ),
+                                  const SizedBox(height: 6),
+                                  FreeInputBar(
+                                    busy: false,
+                                    onSend: _act,
+                                    onCancel: _cancel,
                                   ),
-                                ),
-                              ),
+                                ] else
+                                  FreeInputBar(
+                                    busy: true,
+                                    onSend: _act,
+                                    onCancel: _cancel,
+                                  ),
+                              ],
                             ),
-                          for (var i = 0; i < _choices.length; i++)
-                            ChoicePill(
-                              index: i + 1,
-                              text: _choices[i],
-                              enabled: !_busy,
-                              onTap: () => _act(_choices[i]),
-                            ),
-                          const SizedBox(height: 6),
-                          FreeInputBar(
-                            busy: false,
-                            onSend: _act,
-                            onCancel: _cancel,
                           ),
-                        ] else
-                          FreeInputBar(
-                            busy: true,
-                            onSend: _act,
-                            onCancel: _cancel,
-                          ),
-                        const SizedBox(height: 32),
-                      ],
+                          const SizedBox(height: 32),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -613,7 +660,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ],
                 ),
               ),
-              // 编年史 / 人物志 / 世界观察 / 更多 —— 顶栏就是内容入口
+              // 目录 / 编年史 / 人物志 / 世界观察 / 更多 —— 顶栏就是内容入口
+              _headerAction(
+                palette,
+                icon: Icons.format_list_bulleted_rounded,
+                tooltip: '幕次目录',
+                onTap: () => ChapterTocSheet.show(
+                  context,
+                  history: _history,
+                  onSelectChapter: _jumpToChapter,
+                ),
+              ),
               _headerAction(
                 palette,
                 icon: Icons.timeline_rounded,
@@ -862,6 +919,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.file_download_outlined),
+              title: const Text('导出推演故事'),
+              subtitle: const Text('导出为 Markdown 或纯文本小说并复制'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _showExportSheet();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.tune_rounded),
               title: const Text('设置'),
               onTap: () async {
@@ -873,6 +939,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                       onConfigChanged: (c) {
                         setState(() => _config = c);
                         widget.onConfigChanged(c);
+                        _applyWakelock();
                       },
                     ),
                   ),
@@ -886,10 +953,79 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  /// 世界线管理：列出全部世界线，可切换 / 重命名 / 删除 / 分岔。
-  void _showWorldLines() {
+  void _showExportSheet() {
     final theme = Theme.of(context);
     final palette = AppTheme.readingOf(context);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: theme.scaffoldBackgroundColor,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '导出推演故事',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: palette.ink,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '将当前世界线的长篇小说按章节规范排版导出。',
+                style: TextStyle(fontSize: 12, color: palette.muted),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.code_rounded),
+                title: const Text('复制为 Markdown 格式'),
+                subtitle: const Text('带标题层级、引用块、段落与大事记的结构化排版'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final md = StoryExportService.toMarkdown(
+                    book: _slot.worldBook,
+                    line: _session.line,
+                    history: _history,
+                    chronicle: _chronicle,
+                    worldState: _worldState,
+                  );
+                  await Clipboard.setData(ClipboardData(text: md));
+                  if (mounted) _toast('Markdown 故事已复制到剪贴板（${md.length} 字）');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.article_outlined),
+                title: const Text('复制为纯文本小说'),
+                subtitle: const Text('带全角缩进与分段的小说纯文本'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final txt = StoryExportService.toPlainText(
+                    book: _slot.worldBook,
+                    line: _session.line,
+                    history: _history,
+                    chronicle: _chronicle,
+                    worldState: _worldState,
+                  );
+                  await Clipboard.setData(ClipboardData(text: txt));
+                  if (mounted) _toast('纯文本小说已复制到剪贴板（${txt.length} 字）');
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 世界线管理：以时空分岔树直观展示各线关系，可切换 / 重命名 / 删除 / 分岔。
+  void _showWorldLines() {
+    final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurface.withValues(alpha: 0.55);
 
     showModalBottomSheet<void>(
@@ -900,7 +1036,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.72,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.78,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -909,25 +1045,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
               const Padding(
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 4),
                 child: Text(
-                  '世界线',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  '世界线时空分岔树',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
                 child: Text(
-                  '每条世界线独立保存进度与选择记录，互不干扰。'
-                  '点一条即可切换过去。',
+                  '清晰展示从第几幕分岔、走向与幕数。轻触任一条即可直接切换过去。',
                   style: TextStyle(fontSize: 11.5, height: 1.6, color: muted),
                 ),
               ),
               Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: <Widget>[
-                    for (final l in _session.lines)
-                      _lineTile(theme, palette, l, ctx),
-                  ],
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: WorldLineTreeView(
+                    lines: _session.lines,
+                    activeLineId: _session.line.id,
+                    onSelect: (l) {
+                      Navigator.pop(ctx);
+                      _switchLine(l.id);
+                    },
+                    onRename: (l) => _renameLine(l),
+                    onDelete: (l) => _deleteLine(l),
+                  ),
                 ),
               ),
               const Divider(height: 1),
@@ -949,87 +1090,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  Widget _lineTile(
-    ThemeData theme,
-    ReadingPalette palette,
-    WorldLine l,
-    BuildContext sheetCtx,
-  ) {
-    final active = l.id == _session.line.id;
-    return ListTile(
-      leading: Icon(
-        active ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-        size: 20,
-        color: active
-            ? palette.accent
-            : theme.colorScheme.onSurface.withValues(alpha: 0.3),
-      ),
-      title: Row(
-        children: <Widget>[
-          Flexible(
-            child: Text(
-              l.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14.5,
-                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
-          ),
-          if (active) ...<Widget>[
-            const SizedBox(width: 8),
-            Text(
-              '当前',
-              style: TextStyle(fontSize: 11, color: palette.accent),
-            ),
-          ],
-        ],
-      ),
-      subtitle: Text(
-        <String>[
-          '第 ${l.chapterCount} 幕',
-          if (l.isBranch) '从第 ${l.branchedAtChapter} 幕分岔',
-          if (l.latestDate.isNotEmpty) l.latestDate,
-        ].join(' · '),
-        style: const TextStyle(fontSize: 11.5),
-      ),
-      trailing: PopupMenuButton<String>(
-        icon: const Icon(Icons.more_vert_rounded, size: 18),
-        onSelected: (v) {
-          Navigator.pop(sheetCtx);
-          switch (v) {
-            case 'rename':
-              _renameLine(l);
-              break;
-            case 'delete':
-              _deleteLine(l);
-              break;
-            case 'switch':
-              _switchLine(l.id);
-              break;
-          }
-        },
-        itemBuilder: (_) => <PopupMenuEntry<String>>[
-          if (!active)
-            const PopupMenuItem<String>(
-              value: 'switch',
-              child: Text('切换到这条线'),
-            ),
-          const PopupMenuItem<String>(value: 'rename', child: Text('重命名')),
-          if (_session.lines.length > 1)
-            const PopupMenuItem<String>(value: 'delete', child: Text('删除这条线')),
-        ],
-      ),
-      onTap: active
-          ? null
-          : () {
-              Navigator.pop(sheetCtx);
-              _switchLine(l.id);
-            },
-    );
-  }
 
   /// 分岔点选择：从哪一幕分出去。
   void _showBranchPicker() {
@@ -1246,6 +1306,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   Icons.groups_outlined,
                   () => AnnotationSheet.showCast(context, chapter.cast),
                 ),
+              if (chapter.thought.isNotEmpty)
+                _miniAction(
+                  theme,
+                  Icons.psychology_outlined,
+                  () => ThoughtSheet.show(
+                    context,
+                    title: chapter.title,
+                    thought: chapter.thought,
+                  ),
+                ),
               _miniAction(
                 theme,
                 Icons.more_horiz_rounded,
@@ -1302,6 +1372,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 _copyChapter(chapter);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.edit_note_rounded),
+              title: const Text('修改错字 / 编辑本幕'),
+              subtitle: const Text('就地修正本幕正文中的错别字并保存'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _editChapterContentDialog(chapter);
+              },
+            ),
+            if (chapter.thought.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.psychology_outlined),
+                title: const Text('推演思考'),
+                subtitle: const Text('查看模型生成本幕时的思维链过程'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  ThoughtSheet.show(
+                    context,
+                    title: chapter.title,
+                    thought: chapter.thought,
+                  );
+                },
+              ),
             if (chapter.glossary.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.menu_book_rounded),
@@ -1338,6 +1431,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _editChapterContentDialog(ChapterNode chapter) async {
+    final ctrl = TextEditingController(text: chapter.content);
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          '修改正文 · ${chapter.title}',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: ctrl,
+            maxLines: 14,
+            autofocus: true,
+            style: const TextStyle(fontSize: 13.5, height: 1.6),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: '输入修正后的正文内容…',
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('保存修改'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+
+    if (saved == null || !mounted) return;
+    final index = _history.indexOf(chapter);
+    if (index < 0) return;
+
+    setState(() {
+      _session.editChapterContent(index, saved);
+    });
+    await _persist();
+    _toast('第 ${chapter.chapterIndex} 幕正文已更新并保存。');
   }
 
   Future<void> _copyChapter(ChapterNode chapter) async {
@@ -1472,6 +1612,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Widget _liveView(ThemeData theme, double fontSize) {
     final palette = AppTheme.readingOf(context);
     final preview = ResponseParser.stripForPreview(_live);
+    final isThinking = _live.contains(RegExp(r'[<＜《]\s*(think|thought)', caseSensitive: false));
+    final statusText = _degraded
+        ? '本地降级中…'
+        : (preview.isEmpty && isThinking ? '推演思考中…' : '推演中…');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1491,7 +1636,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               ),
               const SizedBox(width: 8),
               Text(
-                _degraded ? '本地降级中…' : '推演中…',
+                statusText,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

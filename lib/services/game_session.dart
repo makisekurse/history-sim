@@ -186,6 +186,7 @@ class GameSession {
     required String rawOutput,
     required String stateRaw,
     String? title,
+    String thought = '',
   }) {
     // 模型只提出状态变化；校验、合并、截断都在这里做。
     final nextState = WorldStateService.merge(
@@ -206,6 +207,7 @@ class GameSession {
       rawOutput: rawOutput,
       chronicleAfter: target.chronicle,
       worldStateAfter: nextState,
+      thought: thought,
     );
 
     target.history = <ChapterNode>[...target.history, node];
@@ -213,6 +215,16 @@ class GameSession {
     target.updatedAt = DateTime.now();
     _choices = List<String>.from(choices);
     return node;
+  }
+
+  /// 就地修正某幕的正文（错字微调）。
+  ///
+  /// 严格保证 history · chronicle · worldState 快照与三位一体不变量不受影响。
+  void editChapterContent(int index, String newContent) {
+    if (index < 0 || index >= line.history.length) return;
+    final old = line.history[index];
+    line.history[index] = old.copyWith(content: newContent);
+    line.updatedAt = DateTime.now();
   }
 
   /// 世界书自带开篇时，直接落第一幕（不走模型）。
